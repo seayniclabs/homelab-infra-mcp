@@ -1,0 +1,40 @@
+name: Bug Report
+description: Report a bug in Homelab Infrastructure MCP
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened?
+    validations:
+      required: true
+  - type: dropdown
+    id: module
+    attributes:
+      label: Module
+      options:
+        - NPM
+        - Docker
+        - DNS
+        - Cross-Domain
+        - Safety
+        - Server Core
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce the issue?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: "OS, Python version, Docker version, NPM version"

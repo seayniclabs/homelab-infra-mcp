@@ -1,0 +1,21 @@
+name: New DNS Provider
+description: Request support for a new DNS provider
+labels: ["dns-provider"]
+body:
+  - type: input
+    id: provider
+    attributes:
+      label: DNS Provider
+      description: "e.g., Route53, DigitalOcean, Namecheap"
+    validations:
+      required: true
+  - type: textarea
+    id: api_docs
+    attributes:
+      label: API Documentation
+      description: Link to the provider's API docs
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use Case
+      description: Why do you need this provider?
