@@ -29,14 +29,29 @@ def register(mcp):
             all: Include stopped containers (default: running only).
         """
         containers = _docker().containers.list(all=all)
-        summary = [{
-            "id": c.short_id,
-            "name": c.name,
-            "status": c.status,
-            "image": c.image.tags[0] if c.image.tags else c.image.short_id,
-            "ports": c.ports,
-            "created": c.attrs.get("Created", ""),
-        } for c in containers]
+        summary = []
+        for c in containers:
+            # Resolve image label without triggering an extra API call.
+            # c.image.tags / c.image.short_id call the Docker API and 404 if
+            # the image has been pruned out from under a still-running container
+            # (which happens after `docker image prune -a`). Fall back to the
+            # SHA stored on the container itself.
+            try:
+                tags = c.image.tags
+                image_label = tags[0] if tags else c.image.short_id
+            except docker_sdk.errors.ImageNotFound:
+                image_sha = c.attrs.get("Image", "")
+                image_label = image_sha[7:19] if image_sha.startswith("sha256:") else (image_sha[:12] or "unknown")
+            except Exception:
+                image_label = "unknown"
+            summary.append({
+                "id": c.short_id,
+                "name": c.name,
+                "status": c.status,
+                "image": image_label,
+                "ports": c.ports,
+                "created": c.attrs.get("Created", ""),
+            })
         return json.dumps({"count": len(summary), "containers": summary})
 
     @mcp.tool()

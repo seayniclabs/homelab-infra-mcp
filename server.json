@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.seayniclabs/homelab-infra-mcp",
+  "title": "Vault MCP",
+  "description": "Obsidian vault access — read, search, and manage notes, Docker, and n8n workflows.",
+  "repository": {
+    "url": "https://github.com/seayniclabs/homelab-infra-mcp",
+    "source": "github"
+  },
+  "version": "0.1.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "homelab-infra-mcp",
+      "version": "0.1.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
