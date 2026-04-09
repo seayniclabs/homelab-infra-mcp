@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "homelab-infra-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "Unified MCP server for homelab infrastructure — Nginx Proxy Manager, Docker, and DNS management"
 readme = "README.md"
 license = "MIT"
@@ -25,6 +25,9 @@ dependencies = [
     "httpx>=0.27.0",
     "docker>=7.0.0",
 ]
+
+[project.scripts]
+homelab-infra = "homelab_infra_mcp.server:main"
 
 [project.urls]
 Homepage = "https://github.com/seayniclabs/homelab-infra-mcp"
