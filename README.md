@@ -124,3 +124,5 @@ MIT. See [LICENSE](LICENSE).
 ---
 
 Built by [Seaynic Labs](https://seayniclabs.com).
+
+<!-- mcp-name: io.github.seayniclabs/homelab-infra-mcp -->
