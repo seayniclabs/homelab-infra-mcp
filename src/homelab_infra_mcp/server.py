@@ -25,6 +25,7 @@ Homelab Infrastructure MCP — unified management for your homelab.
 - **NPM** — Nginx Proxy Manager: proxy hosts, SSL, redirections, access lists
 - **Docker** — containers, images, volumes, networks, stats, logs
 - **DNS** — Cloudflare DNS records and zone management
+- **Home Assistant** — turn on/off lights, switches, and other entities
 
 ## Cross-Domain Workflows
 - `expose_service` — create DNS + proxy host for a container in one call
@@ -295,6 +296,11 @@ def _register_modules():
         from homelab_infra_mcp.modules.dns.cloudflare import register as register_dns
         register_dns(mcp)
         logger.info("DNS/Cloudflare module loaded (8 tools)")
+
+    if "home_assistant" in config.modules:
+        from homelab_infra_mcp.modules.home_assistant import register as register_ha
+        register_ha(mcp)
+        logger.info("Home Assistant module loaded (2 tools)")
 
 
 def main():
