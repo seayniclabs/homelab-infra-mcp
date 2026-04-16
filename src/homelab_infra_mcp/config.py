@@ -19,9 +19,12 @@ class Config:
     cloudflare_api_token: str = os.environ.get("CLOUDFLARE_API_TOKEN", "")
     cloudflare_zone_id: str = os.environ.get("CLOUDFLARE_ZONE_ID", "")
 
+    # Home Assistant
+    home_assistant_url: str = os.environ.get("HOME_ASSISTANT_URL", "http://homeassistant.local:8123")
+
     # Server
     mode: str = os.environ.get("HOMELAB_MCP_MODE", "normal")  # normal, readonly, dryrun
-    modules: list[str] = os.environ.get("HOMELAB_MCP_MODULES", "npm,docker,dns").split(",")
+    modules: list[str] = os.environ.get("HOMELAB_MCP_MODULES", "npm,docker,dns,home_assistant").split(",")
     log_level: str = os.environ.get("HOMELAB_MCP_LOG_LEVEL", "INFO")
     transport: str = os.environ.get("HOMELAB_MCP_TRANSPORT", "stdio")  # stdio or sse
     port: int = int(os.environ.get("HOMELAB_MCP_PORT", "8200"))
