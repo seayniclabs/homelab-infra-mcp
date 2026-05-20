@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "homelab-infra": {
+      "command": "python",
+      "args": ["-m", "homelab_infra_mcp"],
+      "env": {
+        "NPM_URL": "http://localhost:81",
+        "NPM_EMAIL": "<npm-admin-email>",
+        "NPM_PASSWORD": "<npm-admin-password>",
+        "DOCKER_HOST": "unix:///var/run/docker.sock",
+        "CLOUDFLARE_API_TOKEN": "<cloudflare-api-token>",
+        "HOMELAB_MCP_MODULES": "npm,docker,dns"
+      }
+    }
+  }
+}
