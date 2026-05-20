@@ -21,6 +21,18 @@ def _read_secret(name: str) -> str:
     return ""
 
 
+def _read_env_or_file(env_var: str, file_env_var: str, secret_name: str) -> str:
+    """Prefer direct env, then explicit file path env, then default secrets file."""
+    if os.environ.get(env_var):
+        return os.environ[env_var]
+    file_path = os.environ.get(file_env_var, "")
+    if file_path:
+        path = Path(file_path)
+        if path.is_file():
+            return path.read_text().strip()
+    return _read_secret(secret_name)
+
+
 def _normalize_mode(mode: str) -> str:
     aliases = {
         "read-only": "readonly",
@@ -36,8 +48,8 @@ class Config:
     """Server configuration loaded from environment variables."""
 
     npm_url: str = os.environ.get("NPM_URL", "http://localhost:81")
-    npm_email: str = os.environ.get("NPM_EMAIL", "") or _read_secret("npm_admin_email")
-    npm_password: str = os.environ.get("NPM_PASSWORD", "") or _read_secret("npm_password")
+    npm_email: str = _read_env_or_file("NPM_EMAIL", "NPM_EMAIL_FILE", "npm_admin_email")
+    npm_password: str = _read_env_or_file("NPM_PASSWORD", "NPM_PASSWORD_FILE", "npm_password")
 
     docker_host: str = os.environ.get("DOCKER_HOST", "unix:///var/run/docker.sock")
     portainer_url: str = os.environ.get("PORTAINER_URL", "").rstrip("/")

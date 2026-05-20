@@ -372,6 +372,15 @@ def register(mcp):
         try:
             async with httpx.AsyncClient(timeout=5) as client:
                 resp = await client.get(f"{config.npm_url}/api/")
-                return json.dumps({"healthy": resp.status_code == 200, "status_code": resp.status_code})
+                version = None
+                if resp.status_code == 200:
+                    schema = await client.get(f"{config.npm_url}/api/schema")
+                    if schema.status_code == 200:
+                        version = schema.json().get("info", {}).get("version")
+                return json.dumps({
+                    "healthy": resp.status_code == 200,
+                    "status_code": resp.status_code,
+                    "version": version,
+                })
         except Exception as e:
             return json.dumps({"healthy": False, "error": str(e)})
