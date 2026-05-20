@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "homelab-infra-mcp"
-version = "0.1.1"
+version = "1.0.0"
 description = "Unified MCP server for homelab infrastructure — Nginx Proxy Manager, Docker, and DNS management"
 readme = "README.md"
 license = "MIT"
@@ -26,8 +26,20 @@ dependencies = [
     "docker>=7.0.0",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-asyncio>=0.24",
+    "respx>=0.21",
+]
+
 [project.scripts]
 homelab-infra = "homelab_infra_mcp.server:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
 
 [project.urls]
 Homepage = "https://github.com/seayniclabs/homelab-infra-mcp"

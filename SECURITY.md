@@ -1,15 +1,15 @@
 # Security Policy
 
-## Reporting Vulnerabilities
+## Docker socket access
 
-If you discover a security vulnerability, please email security@seayniclabs.com.
-Do not open a public issue.
+Docker socket access is equivalent to **root on the host**. Mount the socket read-only when you only need observability; start/stop/restart/remove require write access.
 
-## Security Model
+Do not expose the MCP SSE transport (`HOMELAB_MCP_TRANSPORT=sse`) to the public internet without authentication and a reverse proxy in front.
 
-- **No shell execution** — all operations use structured API calls (HTTP, Docker socket)
-- **Docker socket access** — mount read-only (`:ro`) when possible
-- **Destructive confirmation** — two-step pattern with expiring tokens
-- **Credential handling** — all secrets via environment variables, never hardcoded
-- **Input validation** — container names, domains, ports, record types all validated
-- **Mode enforcement** — read-only mode blocks all write/destructive operations
+## Credentials
+
+NPM passwords, Cloudflare tokens, and Portainer API keys are read from environment variables or local secret files. They are **never** written to logs or tool responses.
+
+## Reporting
+
+Report vulnerabilities to support@seayniclabs.com. Do not open public issues for undisclosed security bugs.

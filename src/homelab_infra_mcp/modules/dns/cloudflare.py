@@ -11,10 +11,13 @@ CF_API = "https://api.cloudflare.com/client/v4"
 VALID_RECORD_TYPES = {"A", "AAAA", "CNAME", "MX", "TXT", "SRV", "NS", "CAA"}
 
 
-async def _cf_get(path: str) -> dict:
+async def _cf_get(path: str, params: dict | None = None) -> dict:
     async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(f"{CF_API}/{path}",
-                                headers={"Authorization": f"Bearer {config.cloudflare_api_token}"})
+        resp = await client.get(
+            f"{CF_API}/{path}",
+            params=params,
+            headers={"Authorization": f"Bearer {config.cloudflare_api_token}"},
+        )
         resp.raise_for_status()
         return resp.json()
 
@@ -207,9 +210,14 @@ def register(mcp):
         if is_dry_run():
             return json.dumps({"dry_run": True, "would_delete": desc})
 
+        async def _execute():
+            await _cf_delete(f"zones/{zid}/dns_records/{record_id}")
+            return {"deleted": True, "id": record_id, "record": desc}
+
         return request_confirmation(
             f"delete DNS record ({desc})",
-            f"This will permanently remove the DNS record: {desc}"
+            f"This will permanently remove the DNS record: {desc}",
+            execute=_execute,
         )
 
     @mcp.tool()

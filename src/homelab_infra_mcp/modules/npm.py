@@ -6,6 +6,12 @@ import httpx
 
 from homelab_infra_mcp.config import config
 from homelab_infra_mcp.safety import check_mode, is_dry_run, request_confirmation
+from homelab_infra_mcp.utils.validation import (
+    ValidationError,
+    validate_domains_csv,
+    validate_port,
+    validation_error_response,
+)
 
 _npm_token: str | None = None
 
@@ -16,10 +22,14 @@ async def _npm_auth() -> str:
     if _npm_token:
         return _npm_token
     async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.post(f"{config.npm_url}/api/tokens", json={
-            "identity": config.npm_email,
-            "secret": config.npm_password,
-        })
+        resp = await client.post(
+            f"{config.npm_url}/api/tokens",
+            json={
+                "identity": config.npm_email,
+                "secret": config.npm_password,
+                "scope": "user",
+            },
+        )
         resp.raise_for_status()
         _npm_token = resp.json()["token"]
         return _npm_token
@@ -110,9 +120,14 @@ def register(mcp):
         blocked = check_mode("write")
         if blocked:
             return json.dumps({"error": blocked})
+        try:
+            domains = validate_domains_csv(domain_names)
+            validate_port(forward_port)
+        except ValidationError as e:
+            return validation_error_response(e)
 
         data = {
-            "domain_names": [d.strip() for d in domain_names.split(",")],
+            "domain_names": domains,
             "forward_scheme": "http",
             "forward_host": forward_host,
             "forward_port": forward_port,
@@ -177,9 +192,14 @@ def register(mcp):
         if is_dry_run():
             return json.dumps({"dry_run": True, "would_delete": {"id": host_id, "domains": domains}})
 
+        async def _execute():
+            await _npm_delete(f"nginx/proxy-hosts/{host_id}")
+            return {"deleted": True, "id": host_id, "domains": domains}
+
         return request_confirmation(
             f"delete proxy host {host_id} ({domains})",
-            f"This will permanently remove the proxy host for {domains}."
+            f"This will permanently remove the proxy host for {domains}.",
+            execute=_execute,
         )
 
     @mcp.tool()
@@ -278,9 +298,14 @@ def register(mcp):
         if is_dry_run():
             return json.dumps({"dry_run": True, "would_delete": {"id": host_id}})
 
+        async def _execute():
+            await _npm_delete(f"nginx/redirection-hosts/{host_id}")
+            return {"deleted": True, "id": host_id}
+
         return request_confirmation(
             f"delete redirection host {host_id}",
-            "This will permanently remove the redirection."
+            "This will permanently remove the redirection.",
+            execute=_execute,
         )
 
     @mcp.tool()
@@ -331,9 +356,14 @@ def register(mcp):
         if is_dry_run():
             return json.dumps({"dry_run": True, "would_delete": {"id": list_id}})
 
+        async def _execute():
+            await _npm_delete(f"nginx/access-lists/{list_id}")
+            return {"deleted": True, "id": list_id}
+
         return request_confirmation(
             f"delete access list {list_id}",
-            "This will permanently remove the access list and affect any proxy hosts using it."
+            "This will permanently remove the access list and affect any proxy hosts using it.",
+            execute=_execute,
         )
 
     @mcp.tool()

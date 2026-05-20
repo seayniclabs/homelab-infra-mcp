@@ -1,0 +1,18 @@
+services:
+  homelab-infra-mcp:
+    image: ghcr.io/seayniclabs/homelab-infra-mcp:latest
+    environment:
+      TZ: America/Chicago
+      NPM_URL: http://host.docker.internal:81
+      NPM_EMAIL: ${NPM_EMAIL}
+      NPM_PASSWORD: ${NPM_PASSWORD}
+      DOCKER_HOST: unix:///var/run/docker.sock
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+      CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID}
+      HOMELAB_MCP_MODE: normal
+      HOMELAB_MCP_TRANSPORT: sse
+      HOMELAB_MCP_PORT: 8200
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "8200:8200"
