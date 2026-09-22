@@ -1,4 +1,4 @@
 {
   "verdict": "no_progress",
-  "reason": "Only chore commit (dependency update) since last sync; no feature progress."
+  "reason": "Only chore commits (auto-checkpoint and dependency sync) since last sync; no feature progress."
 }
