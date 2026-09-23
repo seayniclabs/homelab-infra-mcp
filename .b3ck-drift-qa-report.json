@@ -1,4 +1,4 @@
 {
   "verdict": "no_progress",
-  "reason": "Only chore commits (auto-checkpoint and dependency sync) since last sync; no feature progress."
+  "reason": "No milestones defined in CMDB or repository; since last sync only chore commits (dependency update and auto-checkpoints) found."
 }
