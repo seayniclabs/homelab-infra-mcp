@@ -1,4 +1,4 @@
 {
-  "verdict": "no_progress",
-  "reason": "No milestones defined in CMDB or repository; since last sync only chore commits (dependency update and auto-checkpoints) found."
+  "verdict": "progress",
+  "reason": "Recent commits include feature additions (Home Assistant MCP integration, Portainer backend, CLI entry point) and fixes that advance the project beyond the last synced state."
 }
