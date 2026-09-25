@@ -1,4 +1,4 @@
 {
-  "verdict": "progress",
-  "reason": "Recent commits include feature additions (Home Assistant MCP integration, Portainer backend, CLI entry point) and fixes that advance the project beyond the last synced state."
+  "verdict": "no_progress",
+  "reason": "Since last_synced (2026-09-24T12:11:54Z), only auto-checkpoint chores have been committed; no feature additions, fixes, or milestone-related progress."
 }
