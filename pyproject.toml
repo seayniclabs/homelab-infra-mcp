@@ -48,3 +48,6 @@ Issues = "https://github.com/seayniclabs/homelab-infra-mcp/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/homelab_infra_mcp"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [".b3ck-drift-qa-report.json"]
