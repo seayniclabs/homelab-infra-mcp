@@ -7,11 +7,14 @@ from pathlib import Path
 
 logger = logging.getLogger("homelab-infra-mcp")
 
-_SECRETS_DIR = Path("/Volumes/data/secrets")
+# One file per secret, named after the secret. Override with HOMELAB_SECRETS_DIR.
+_SECRETS_DIR = Path(
+    os.environ.get("HOMELAB_SECRETS_DIR") or "~/.config/homelab-infra-mcp/secrets"
+).expanduser()
 
 
 def _read_secret(name: str) -> str:
-    """Load a secret from env or /Volumes/data/secrets/<name> (never logged)."""
+    """Load a secret from env or <HOMELAB_SECRETS_DIR>/<name> (never logged)."""
     env_key = name.upper()
     if os.environ.get(env_key):
         return os.environ[env_key]

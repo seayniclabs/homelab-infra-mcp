@@ -15,27 +15,15 @@ from typing import Any
 import httpx
 import yaml
 
-from homelab_infra_mcp.config import config
+from homelab_infra_mcp.config import _read_secret, config
 from homelab_infra_mcp.safety import check_mode, is_dry_run
 
 logger = logging.getLogger("homelab-infra-mcp")
 
-# Home Assistant configuration
-HA_TOKEN_FILE = "/Volumes/data/secrets/ha_token"
-
 
 def _read_ha_token() -> str | None:
-    """Read HA token from file. Returns None if file not found."""
-    try:
-        with open(HA_TOKEN_FILE, "r") as f:
-            token = f.read().strip()
-            return token if token else None
-    except FileNotFoundError:
-        logger.warning(f"HA token file not found: {HA_TOKEN_FILE}")
-        return None
-    except Exception as e:
-        logger.error(f"Failed to read HA token: {e}")
-        return None
+    """HA token from HA_TOKEN or the ha_token file in the secrets dir. None if unset."""
+    return _read_secret("ha_token") or None
 
 
 async def _hass_api_call(
@@ -56,7 +44,7 @@ async def _hass_api_call(
     if not token:
         return {
             "success": False,
-            "error": f"Home Assistant token not available at {HA_TOKEN_FILE}"
+            "error": "Home Assistant token not set (HA_TOKEN, or ha_token in HOMELAB_SECRETS_DIR)"
         }
 
     url = f"{config.home_assistant_url}{path}"

@@ -89,6 +89,10 @@ services:
 | `DNS_PROVIDER` | No | `cloudflare` | DNS provider |
 | `CLOUDFLARE_API_TOKEN` | Cond. | — | Required for DNS module |
 | `CLOUDFLARE_ZONE_ID` | No | — | Default zone ID |
+| `PORTAINER_URL` / `PORTAINER_TOKEN` | No | — | Use Portainer instead of the Docker socket |
+| `HOME_ASSISTANT_URL` | No | `http://homeassistant.local:8123` | Home Assistant module |
+| `HA_TOKEN` | Cond. | — | Required for the Home Assistant module |
+| `HOMELAB_SECRETS_DIR` | No | `~/.config/homelab-infra-mcp/secrets` | Directory of one-file-per-secret fallbacks (`npm_password`, `cloudflare_api_token`, `ha_token`, …) used when the env var is unset |
 | `HOMELAB_MCP_MODE` | No | `normal` | `normal` / `readonly` / `dryrun` |
 | `HOMELAB_MCP_MODULES` | No | `npm,docker,dns` | Comma-separated enabled modules |
 | `HOMELAB_MCP_TRANSPORT` | No | `stdio` | `stdio` or `sse` |
