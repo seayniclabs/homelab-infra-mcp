@@ -15,6 +15,10 @@ One MCP server for homelab operations across Nginx Proxy Manager, Docker (option
 - The live proxy entry (`homelab` in mcp-proxy) runs this checkout and needs `HOMELAB_SECRETS_DIR=REDACTED/secrets` in its env before the proxy next restarts.
 
 ## Next Steps
-1. Publish 1.0.1 to PyPI (approved, D8) and verify `pip install homelab-infra-mcp==1.0.1` in a fresh venv
-2. Set `HOMELAB_SECRETS_DIR` on the `homelab` mcp-proxy entry, then restart the proxy
-3. Write the blueprint (`blueprint new homelab-infra-mcp`)
+
+1. [Batch 2] Fix server.json (title, description, version 1.0.1), then tag v1.0.1 and create the GitHub release
+2. [Batch 2] Publish the GHCR image publicly or remove the Docker quick start
+3. [Batch 2] MCP registry + Glama listing (homelab-infra-mcp-1); report the package version in serverInfo
+4. [Batch 2] README opens with expose_service and a `uvx homelab-infra-mcp` + client config block (homelab-infra-mcp-2, -3)
+5. [Maybe] Cloudflare Tunnel tools (-4); r/selfhosted, r/homelab and Docker MCP Catalog after the public image (-5)
+
