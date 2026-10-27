@@ -1,119 +1,84 @@
-"""Configuration from environment variables."""
+"""Settings come from environment variables, then an optional TOML file.
 
-import logging
+Names follow one pattern. Core settings are ``HOMELAB_<KEY>``; a module setting is
+``HOMELAB_<MODULE>_<KEY>``. Any setting can instead be read from a file named by
+``HOMELAB_<MODULE>_<KEY>_FILE`` (for Docker secrets and similar). The TOML file is
+``$HOMELAB_CONFIG`` if set, otherwise ``$XDG_CONFIG_HOME/homelab/config.toml``
+(``~/.config/homelab/config.toml``). Each module reads its own ``[<module>]`` table;
+environment variables win over the file. Nothing here assumes a particular MCP client.
+"""
+
+from __future__ import annotations
+
 import os
-import sys
+import tomllib
 from pathlib import Path
+from typing import Mapping
 
-logger = logging.getLogger("homelab-infra-mcp")
-
-# One file per secret, named after the secret. Override with HOMELAB_SECRETS_DIR.
-_SECRETS_DIR = Path(
-    os.environ.get("HOMELAB_SECRETS_DIR") or "~/.config/homelab-infra-mcp/secrets"
-).expanduser()
-
-
-def _read_secret(name: str) -> str:
-    """Load a secret from env or <HOMELAB_SECRETS_DIR>/<name> (never logged)."""
-    env_key = name.upper()
-    if os.environ.get(env_key):
-        return os.environ[env_key]
-    path = _SECRETS_DIR / name
-    if path.is_file():
-        return path.read_text().strip()
-    return ""
+PREFIX = "HOMELAB"
+CORE = "core"
+TRUE = {"1", "true", "yes", "on"}
+FALSE = {"0", "false", "no", "off"}
 
 
-def _read_env_or_file(env_var: str, file_env_var: str, secret_name: str) -> str:
-    """Prefer direct env, then explicit file path env, then default secrets file."""
-    if os.environ.get(env_var):
-        return os.environ[env_var]
-    file_path = os.environ.get(file_env_var, "")
-    if file_path:
-        path = Path(file_path)
-        if path.is_file():
-            return path.read_text().strip()
-    return _read_secret(secret_name)
+def env_name(module: str, key: str) -> str:
+    """HOMELAB_<KEY> for core settings, HOMELAB_<MODULE>_<KEY> for module settings."""
+    if module == CORE:
+        return f"{PREFIX}_{key.upper()}"
+    return f"{PREFIX}_{module.upper()}_{key.upper()}"
 
 
-def _normalize_mode(mode: str) -> str:
-    aliases = {
-        "read-only": "readonly",
-        "dry-run": "dryrun",
-        "normal": "normal",
-        "readonly": "readonly",
-        "dryrun": "dryrun",
-    }
-    return aliases.get(mode.strip().lower(), mode.strip().lower())
+def config_path(env: Mapping[str, str]) -> Path:
+    if env.get("HOMELAB_CONFIG"):
+        return Path(env["HOMELAB_CONFIG"]).expanduser()
+    base = env.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "homelab" / "config.toml"
 
 
 class Config:
-    """Server configuration loaded from environment variables."""
+    def __init__(self, env: Mapping[str, str] | None = None, file_data: dict | None = None):
+        self.env = dict(os.environ if env is None else env)
+        if file_data is None:
+            path = config_path(self.env)
+            file_data = tomllib.loads(path.read_text()) if path.is_file() else {}
+        self.file = file_data
 
-    npm_url: str = os.environ.get("NPM_URL", "http://localhost:81")
-    npm_email: str = _read_env_or_file("NPM_EMAIL", "NPM_EMAIL_FILE", "npm_admin_email")
-    npm_password: str = _read_env_or_file("NPM_PASSWORD", "NPM_PASSWORD_FILE", "npm_password")
+    def get(self, module: str, key: str, default: str | None = None) -> str | None:
+        name = env_name(module, key)
+        value = self.env.get(name)
+        if value not in (None, ""):
+            return value
+        file_var = self.env.get(f"{name}_FILE")
+        if file_var:
+            path = Path(file_var).expanduser()
+            if path.is_file():
+                text = path.read_text().strip()
+                if text:
+                    return text
+        value = self.file.get(module, {}).get(key)
+        if value not in (None, ""):
+            return str(value)
+        return default
 
-    docker_host: str = os.environ.get("DOCKER_HOST", "unix:///var/run/docker.sock")
-    portainer_url: str = os.environ.get("PORTAINER_URL", "").rstrip("/")
-    portainer_token: str = os.environ.get("PORTAINER_TOKEN", "") or _read_secret(
-        "code_server_portainer_token"
-    )
-    portainer_endpoint_id: int = int(os.environ.get("PORTAINER_ENDPOINT_ID", "1"))
+    def flag(self, module: str, key: str, default: bool) -> bool:
+        value = self.get(module, key)
+        if value is None:
+            return default
+        value = value.strip().lower()
+        if value in TRUE:
+            return True
+        if value in FALSE:
+            return False
+        return default
 
-    dns_provider: str = os.environ.get("DNS_PROVIDER", "cloudflare")
-    cloudflare_api_token: str = os.environ.get("CLOUDFLARE_API_TOKEN", "") or _read_secret(
-        "cloudflare_api_token"
-    )
-    cloudflare_zone_id: str = os.environ.get("CLOUDFLARE_ZONE_ID", "")
+    def enabled(self, module: str, default: bool) -> bool:
+        return self.flag(module, "enabled", default)
 
-    home_assistant_url: str = os.environ.get(
-        "HOME_ASSISTANT_URL", "http://homeassistant.local:8123"
-    )
+    def require(self, module: str, *keys: str) -> dict[str, str]:
+        """Return the named settings, or raise a not_configured error naming the env vars."""
+        from homelab_infra_mcp.errors import not_configured
 
-    mode: str = _normalize_mode(os.environ.get("HOMELAB_MCP_MODE", "normal"))
-    modules: list[str] = [
-        m.strip()
-        for m in os.environ.get("HOMELAB_MCP_MODULES", "npm,docker,dns").split(",")
-        if m.strip()
-    ]
-    log_level: str = os.environ.get("HOMELAB_MCP_LOG_LEVEL", "INFO")
-    transport: str = os.environ.get("HOMELAB_MCP_TRANSPORT", "stdio")
-    port: int = int(os.environ.get("HOMELAB_MCP_PORT", "8200"))
-
-    @property
-    def docker_backend(self) -> str:
-        """portainer | socket"""
-        if self.portainer_url and self.portainer_token:
-            if self.docker_host and self.docker_host != "unix:///var/run/docker.sock":
-                logger.warning(
-                    "PORTAINER_URL is set — using Portainer backend; DOCKER_HOST is ignored."
-                )
-            return "portainer"
-        return "socket"
-
-    def validate_modules(self) -> list[str]:
-        """Warn on missing credentials for enabled modules; return warnings."""
-        warnings: list[str] = []
-        if "npm" in self.modules:
-            if not self.npm_email or not self.npm_password:
-                warnings.append("NPM module enabled but NPM_EMAIL/NPM_PASSWORD are missing.")
-        if "docker" in self.modules:
-            if self.docker_backend == "portainer":
-                if not self.portainer_url or not self.portainer_token:
-                    warnings.append(
-                        "Docker module enabled for Portainer but PORTAINER_URL/TOKEN missing."
-                    )
-            elif not Path(self.docker_host.replace("unix://", "")).exists() and self.docker_host.startswith("unix://"):
-                warnings.append(
-                    f"Docker socket not found at {self.docker_host} — Docker tools may fail."
-                )
-        if "dns" in self.modules and self.dns_provider == "cloudflare":
-            if not self.cloudflare_api_token:
-                warnings.append(
-                    "DNS module enabled but CLOUDFLARE_API_TOKEN is missing."
-                )
-        return warnings
-
-
-config = Config()
+        missing = [env_name(module, k) for k in keys if not self.get(module, k)]
+        if missing:
+            raise not_configured(module, missing)
+        return {k: self.get(module, k) or "" for k in keys}

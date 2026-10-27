@@ -1,433 +1,308 @@
-"""Docker backends — unix socket (docker-py) or Portainer REST API."""
+"""Docker backends: the local socket (docker-py) or the Portainer REST API.
+
+Both expose the same async methods and return plain dicts and lists, so the tools never
+care which one is in use. The Docker SDK client is built by an injected factory, which is
+how the tests run without a Docker engine.
+"""
 
 from __future__ import annotations
 
-import json
-from abc import ABC, abstractmethod
-from typing import Any
+import asyncio
+from typing import Any, Callable
 
 import docker as docker_sdk
 import httpx
 
-from homelab_infra_mcp.config import config
+from homelab_infra_mcp.config import Config
+from homelab_infra_mcp.errors import HomelabError
+from homelab_infra_mcp.runtime import HttpFactory
+
+MODULE = "docker"
+DEFAULT_HOST = "unix:///var/run/docker.sock"
 
 
-class DockerBackend(ABC):
-    backend_name: str
-
-    @abstractmethod
-    def health(self) -> dict[str, Any]: ...
-
-    @abstractmethod
-    def list_containers(self, all: bool = False) -> list[dict[str, Any]]: ...
-
-    @abstractmethod
-    def get_container(self, name_or_id: str) -> dict[str, Any]: ...
-
-    @abstractmethod
-    def start_container(self, name_or_id: str) -> dict[str, Any]: ...
-
-    @abstractmethod
-    def stop_container(self, name_or_id: str, timeout: int = 10) -> dict[str, Any]: ...
-
-    @abstractmethod
-    def restart_container(self, name_or_id: str, timeout: int = 10) -> dict[str, Any]: ...
-
-    @abstractmethod
-    def remove_container(self, name_or_id: str) -> dict[str, Any]: ...
-
-    @abstractmethod
-    def container_logs(self, name_or_id: str, tail: int = 50, since: str = "") -> dict[str, Any]: ...
-
-    @abstractmethod
-    def container_stats(self, name_or_id: str) -> dict[str, Any]: ...
-
-    @abstractmethod
-    def list_images(self) -> list[dict[str, Any]]: ...
-
-    @abstractmethod
-    def pull_image(self, image: str, tag: str = "latest") -> dict[str, Any]: ...
-
-    @abstractmethod
-    def remove_image(self, image: str, force: bool = False) -> dict[str, Any]: ...
-
-    @abstractmethod
-    def list_volumes(self) -> list[dict[str, Any]]: ...
-
-    @abstractmethod
-    def list_networks(self) -> list[dict[str, Any]]: ...
-
-    @abstractmethod
-    def prune_containers(self) -> dict[str, Any]: ...
-
-    @abstractmethod
-    def prune_images(self) -> dict[str, Any]: ...
+def stats_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
+    cpu = raw.get("cpu_stats", {})
+    pre = raw.get("precpu_stats", {})
+    cpu_delta = cpu.get("cpu_usage", {}).get("total_usage", 0) - pre.get("cpu_usage", {}).get("total_usage", 0)
+    system_delta = cpu.get("system_cpu_usage", 0) - pre.get("system_cpu_usage", 0)
+    cpu_pct = (cpu_delta / system_delta * 100.0) if system_delta > 0 else 0.0
+    mem = raw.get("memory_stats", {})
+    usage = mem.get("usage", 0)
+    limit = mem.get("limit", 1) or 1
+    return {
+        "cpu_percent": round(cpu_pct, 2),
+        "memory_usage_mb": round(usage / 1024 / 1024, 1),
+        "memory_limit_mb": round(limit / 1024 / 1024, 1),
+        "memory_percent": round(usage / limit * 100.0, 2),
+    }
 
 
-class SocketBackend(DockerBackend):
-    backend_name = "socket"
+class SocketBackend:
+    name = "socket"
 
-    def __init__(self) -> None:
-        self._client: docker_sdk.DockerClient | None = None
+    def __init__(self, host: str, factory: Callable[[str], Any]):
+        self.host = host
+        self.factory = factory
+        self._dc: Any = None
 
-    def _docker(self) -> docker_sdk.DockerClient:
-        if self._client is None:
-            self._client = docker_sdk.DockerClient(base_url=config.docker_host)
-        return self._client
+    def _client(self) -> Any:
+        if self._dc is None:
+            self._dc = self.factory(self.host)
+        return self._dc
 
-    def health(self) -> dict[str, Any]:
-        info = self._docker().info()
-        return {
-            "healthy": True,
-            "backend": self.backend_name,
-            "version": info.get("ServerVersion", "unknown"),
-            "containers": info.get("Containers", 0),
-            "containers_running": info.get("ContainersRunning", 0),
-            "images": info.get("Images", 0),
-        }
+    async def _run(self, fn: Callable[[], Any]) -> Any:
+        try:
+            return await asyncio.to_thread(fn)
+        except docker_sdk.errors.NotFound as e:
+            raise HomelabError(MODULE, "not_found", str(e.explanation or e),
+                               "call docker_containers with action=list to see names and ids.")
+        except docker_sdk.errors.APIError as e:
+            raise HomelabError(MODULE, "api_error", f"Docker API error: {e.explanation or e}")
+        except docker_sdk.errors.DockerException as e:
+            raise HomelabError(MODULE, "unreachable", f"Docker is not reachable ({type(e).__name__}).",
+                               f"check HOMELAB_DOCKER_HOST ({self.host}) and that the socket is mounted.")
+        except OSError as e:
+            raise HomelabError(MODULE, "unreachable", f"Docker socket error: {e}",
+                               f"check HOMELAB_DOCKER_HOST ({self.host}).")
 
-    def list_containers(self, all: bool = False) -> list[dict[str, Any]]:
-        summary = []
-        for c in self._docker().containers.list(all=all):
-            try:
-                tags = c.image.tags
-                image_label = tags[0] if tags else c.image.short_id
-            except docker_sdk.errors.ImageNotFound:
-                image_sha = c.attrs.get("Image", "")
-                image_label = (
-                    image_sha[7:19]
-                    if image_sha.startswith("sha256:")
-                    else (image_sha[:12] or "unknown")
-                )
-            except Exception:
-                image_label = "unknown"
-            summary.append({
-                "id": c.short_id,
-                "name": c.name,
-                "status": c.status,
-                "image": image_label,
-                "ports": c.ports,
-            })
-        return summary
+    @staticmethod
+    def _ports(ports: dict | None) -> list[str]:
+        out = []
+        for private, bindings in (ports or {}).items():
+            if bindings:
+                out += [f"{b.get('HostPort')}->{private}" for b in bindings]
+            else:
+                out.append(private)
+        return out
 
-    def get_container(self, name_or_id: str) -> dict[str, Any]:
-        c = self._docker().containers.get(name_or_id)
-        return {
-            "id": c.id,
-            "name": c.name,
-            "status": c.status,
-            "image": c.image.tags[0] if c.image.tags else c.image.short_id,
-            "ports": c.ports,
-        }
+    def _summary(self, c: Any) -> dict[str, Any]:
+        try:
+            tags = c.image.tags
+            image = tags[0] if tags else c.image.short_id
+        except Exception:
+            image = "unknown"
+        return {"id": c.short_id, "name": c.name, "status": c.status, "image": image,
+                "ports": self._ports(c.ports)}
 
-    def start_container(self, name_or_id: str) -> dict[str, Any]:
-        c = self._docker().containers.get(name_or_id)
-        c.start()
-        return {"started": True, "name": c.name}
+    async def health(self) -> dict[str, Any]:
+        info = await self._run(lambda: self._client().info())
+        return {"backend": self.name, "version": info.get("ServerVersion", "unknown"),
+                "containers": info.get("Containers", 0), "containers_running": info.get("ContainersRunning", 0),
+                "images": info.get("Images", 0)}
 
-    def stop_container(self, name_or_id: str, timeout: int = 10) -> dict[str, Any]:
-        c = self._docker().containers.get(name_or_id)
-        c.stop(timeout=timeout)
-        return {"stopped": True, "name": c.name}
+    async def list_containers(self, all: bool) -> list[dict[str, Any]]:
+        return await self._run(lambda: [self._summary(c) for c in self._client().containers.list(all=all)])
 
-    def restart_container(self, name_or_id: str, timeout: int = 10) -> dict[str, Any]:
-        c = self._docker().containers.get(name_or_id)
-        c.restart(timeout=timeout)
-        return {"restarted": True, "name": c.name}
+    async def get_container(self, ref: str) -> dict[str, Any]:
+        def go():
+            c = self._client().containers.get(ref)
+            return dict(self._summary(c), id=c.id, attrs=c.attrs)
+        return await self._run(go)
 
-    def remove_container(self, name_or_id: str) -> dict[str, Any]:
-        c = self._docker().containers.get(name_or_id)
-        name = c.name
-        c.remove()
-        return {"removed": True, "name": name}
+    async def action(self, ref: str, verb: str, timeout: int = 10) -> dict[str, Any]:
+        def go():
+            c = self._client().containers.get(ref)
+            if verb == "start":
+                c.start()
+            elif verb == "stop":
+                c.stop(timeout=timeout)
+            elif verb == "restart":
+                c.restart(timeout=timeout)
+            elif verb == "remove":
+                c.remove()
+            return {"name": c.name, "id": c.short_id}
+        return await self._run(go)
 
-    def container_logs(self, name_or_id: str, tail: int = 50, since: str = "") -> dict[str, Any]:
-        c = self._docker().containers.get(name_or_id)
-        kwargs: dict[str, Any] = {"tail": tail, "timestamps": True}
-        if since:
-            kwargs["since"] = since
-        logs = c.logs(**kwargs).decode("utf-8", errors="replace")
-        lines = logs.strip().split("\n")
-        return {"container": c.name, "lines": len(lines), "logs": lines[-tail:]}
+    async def logs(self, ref: str, tail: int, since: str) -> dict[str, Any]:
+        def go():
+            c = self._client().containers.get(ref)
+            kwargs: dict[str, Any] = {"tail": tail, "timestamps": True}
+            if since:
+                kwargs["since"] = since
+            text = c.logs(**kwargs).decode("utf-8", errors="replace")
+            return {"name": c.name, "lines": text.strip().split("\n") if text.strip() else []}
+        return await self._run(go)
 
-    def container_stats(self, name_or_id: str) -> dict[str, Any]:
-        c = self._docker().containers.get(name_or_id)
-        stats = c.stats(stream=False)
-        cpu_delta = (
-            stats["cpu_stats"]["cpu_usage"]["total_usage"]
-            - stats["precpu_stats"]["cpu_usage"]["total_usage"]
-        )
-        system_delta = (
-            stats["cpu_stats"]["system_cpu_usage"]
-            - stats["precpu_stats"]["system_cpu_usage"]
-        )
-        cpu_pct = (cpu_delta / system_delta * 100.0) if system_delta > 0 else 0.0
-        mem = stats.get("memory_stats", {})
-        mem_usage = mem.get("usage", 0)
-        mem_limit = mem.get("limit", 1)
-        mem_pct = (mem_usage / mem_limit * 100.0) if mem_limit > 0 else 0.0
-        return {
-            "container": c.name,
-            "cpu_percent": round(cpu_pct, 2),
-            "memory_usage_mb": round(mem_usage / 1024 / 1024, 1),
-            "memory_limit_mb": round(mem_limit / 1024 / 1024, 1),
-            "memory_percent": round(mem_pct, 2),
-        }
+    async def stats(self, ref: str) -> dict[str, Any]:
+        def go():
+            c = self._client().containers.get(ref)
+            return {"name": c.name, **stats_from_raw(c.stats(stream=False))}
+        return await self._run(go)
 
-    def list_images(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": i.short_id,
-                "tags": i.tags,
-                "size_mb": round(i.attrs.get("Size", 0) / 1024 / 1024, 1),
-            }
-            for i in self._docker().images.list()
-        ]
+    async def list_images(self) -> list[dict[str, Any]]:
+        def go():
+            return [{"id": i.short_id, "tags": list(i.tags or []),
+                     "size_mb": round(i.attrs.get("Size", 0) / 1024 / 1024, 1)}
+                    for i in self._client().images.list()]
+        return await self._run(go)
 
-    def pull_image(self, image: str, tag: str = "latest") -> dict[str, Any]:
-        self._docker().images.pull(image, tag=tag)
-        return {"pulled": True, "image": f"{image}:{tag}"}
+    async def pull(self, image: str, tag: str) -> dict[str, Any]:
+        await self._run(lambda: self._client().images.pull(image, tag=tag))
+        return {"image": f"{image}:{tag}"}
 
-    def remove_image(self, image: str, force: bool = False) -> dict[str, Any]:
-        self._docker().images.remove(image, force=force)
-        return {"removed": True, "image": image}
+    async def remove_image(self, image: str, force: bool) -> dict[str, Any]:
+        await self._run(lambda: self._client().images.remove(image, force=force))
+        return {"image": image}
 
-    def list_volumes(self) -> list[dict[str, Any]]:
-        return [
-            {"name": v.name, "driver": v.attrs.get("Driver", "")}
-            for v in self._docker().volumes.list()
-        ]
+    async def list_volumes(self) -> list[dict[str, Any]]:
+        return await self._run(lambda: [{"name": v.name, "driver": v.attrs.get("Driver", "")}
+                                        for v in self._client().volumes.list()])
 
-    def list_networks(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": n.short_id,
-                "name": n.name,
-                "driver": n.attrs.get("Driver", ""),
-            }
-            for n in self._docker().networks.list()
-        ]
+    async def list_networks(self) -> list[dict[str, Any]]:
+        return await self._run(lambda: [{"id": n.short_id, "name": n.name, "driver": n.attrs.get("Driver", "")}
+                                        for n in self._client().networks.list()])
 
-    def prune_containers(self) -> dict[str, Any]:
-        result = self._docker().containers.prune()
-        return {"pruned": True, "containers_deleted": result.get("ContainersDeleted", [])}
+    async def prune_containers(self) -> dict[str, Any]:
+        result = await self._run(lambda: self._client().containers.prune())
+        return {"deleted": result.get("ContainersDeleted") or []}
 
-    def prune_images(self) -> dict[str, Any]:
-        result = self._docker().images.prune()
-        return {"pruned": True, "space_reclaimed": result.get("SpaceReclaimed", 0)}
+    async def prune_images(self) -> dict[str, Any]:
+        result = await self._run(lambda: self._client().images.prune())
+        return {"space_reclaimed": result.get("SpaceReclaimed", 0)}
+
+    async def list_stacks(self) -> list[dict[str, Any]]:
+        raise HomelabError(MODULE, "unsupported", "stacks need the Portainer backend.",
+                           "set HOMELAB_DOCKER_PORTAINER_URL and HOMELAB_DOCKER_PORTAINER_TOKEN.")
+
+    get_stack = list_stacks
 
 
-class PortainerBackend(DockerBackend):
-    backend_name = "portainer"
+class PortainerBackend:
+    name = "portainer"
 
-    def __init__(self) -> None:
-        self._base = config.portainer_url
-        self._headers = {"X-API-Key": config.portainer_token}
-        self._endpoint = config.portainer_endpoint_id
+    def __init__(self, config: Config, http: HttpFactory):
+        self.base = config.require(MODULE, "portainer_url")["portainer_url"].rstrip("/")
+        self.token = config.require(MODULE, "portainer_token")["portainer_token"]
+        self.endpoint = config.get(MODULE, "portainer_endpoint_id", "1")
+        self.http = http
 
     def _docker_path(self, suffix: str) -> str:
-        return f"{self._base}/api/endpoints/{self._endpoint}/docker{suffix}"
+        return f"{self.base}/api/endpoints/{self.endpoint}/docker{suffix}"
 
-    def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        params: dict | None = None,
-        json_body: dict | None = None,
-    ) -> Any:
-        with httpx.Client(timeout=30, headers=self._headers) as client:
-            resp = client.request(
-                method,
-                path,
-                params=params,
-                json=json_body,
-            )
-            resp.raise_for_status()
-            if resp.content:
-                return resp.json()
-            return {}
+    async def _request(self, method: str, url: str, *, params: dict | None = None,
+                       json_body: dict | None = None) -> Any:
+        try:
+            async with self.http() as client:
+                r = await client.request(method, url, params=params, json=json_body,
+                                         headers={"X-API-Key": self.token})
+        except httpx.HTTPError as e:
+            raise HomelabError(MODULE, "unreachable", f"could not reach Portainer ({type(e).__name__}).",
+                               "check HOMELAB_DOCKER_PORTAINER_URL.")
+        if r.status_code in (401, 403):
+            raise HomelabError(MODULE, "auth_failed", f"Portainer returned {r.status_code}.",
+                               "check HOMELAB_DOCKER_PORTAINER_TOKEN.")
+        if r.status_code == 404:
+            raise HomelabError(MODULE, "not_found", f"Portainer returned 404 for {url.rsplit('/api/', 1)[-1]}.",
+                               "check the container, image or stack id.")
+        if r.status_code >= 400:
+            raise HomelabError(MODULE, "api_error", f"Portainer returned {r.status_code}.")
+        return r.json() if r.content else {}
 
-    def _resolve_id(self, name_or_id: str) -> str:
-        containers = self.list_containers(all=True)
-        needle = name_or_id.lstrip("/")
-        for c in containers:
-            cid = c["id"]
-            if (
-                cid == needle
-                or cid.startswith(needle)
-                or c.get("short_id") == needle
-                or c["name"] == needle
-            ):
-                return cid
-        raise KeyError(f"Container not found: {name_or_id}")
+    async def _resolve(self, ref: str) -> str:
+        needle = ref.lstrip("/")
+        for c in await self.list_containers(all=True):
+            if c["id"] == needle or c["id"].startswith(needle) or c["name"] == needle:
+                return c["id"]
+        raise HomelabError(MODULE, "not_found", f"no container matches {ref!r}.",
+                           "call docker_containers with action=list to see names and ids.")
 
-    def health(self) -> dict[str, Any]:
-        status = self._request("GET", f"{self._base}/api/status")
-        return {
-            "healthy": True,
-            "backend": self.backend_name,
-            "version": status.get("Version", "unknown"),
-        }
+    @staticmethod
+    def _ports(ports: list | None) -> list[str]:
+        out = []
+        for p in ports or []:
+            if p.get("PublicPort"):
+                out.append(f"{p['PublicPort']}->{p.get('PrivatePort')}/{p.get('Type', 'tcp')}")
+            else:
+                out.append(f"{p.get('PrivatePort')}/{p.get('Type', 'tcp')}")
+        return out
 
-    def list_containers(self, all: bool = False) -> list[dict[str, Any]]:
-        raw = self._request(
-            "GET",
-            self._docker_path("/containers/json"),
-            params={"all": 1 if all else 0},
-        )
-        return [
-            {
-                "id": c["Id"],
-                "short_id": c["Id"][:12],
-                "name": (c.get("Names") or [""])[0].lstrip("/"),
-                "status": c.get("Status", ""),
-                "image": c.get("Image", ""),
-                "ports": c.get("Ports", []),
-            }
-            for c in raw
-        ]
+    async def health(self) -> dict[str, Any]:
+        status = await self._request("GET", f"{self.base}/api/status")
+        return {"backend": self.name, "version": status.get("Version", "unknown")}
 
-    def get_container(self, name_or_id: str) -> dict[str, Any]:
-        cid = self._resolve_id(name_or_id)
-        c = self._request("GET", self._docker_path(f"/containers/{cid}/json"))
-        return {
-            "id": c["Id"],
-            "short_id": c["Id"][:12],
-            "name": c["Name"].lstrip("/"),
-            "status": c["State"]["Status"],
-            "image": c["Config"]["Image"],
-            "ports": c.get("NetworkSettings", {}).get("Ports", {}),
-        }
+    async def list_containers(self, all: bool) -> list[dict[str, Any]]:
+        raw = await self._request("GET", self._docker_path("/containers/json"), params={"all": 1 if all else 0})
+        return [{"id": c["Id"][:12], "name": (c.get("Names") or [""])[0].lstrip("/"),
+                 "status": c.get("State") or c.get("Status", ""), "image": c.get("Image", ""),
+                 "ports": self._ports(c.get("Ports"))} for c in raw]
 
-    def start_container(self, name_or_id: str) -> dict[str, Any]:
-        cid = self._resolve_id(name_or_id)
-        self._request("POST", self._docker_path(f"/containers/{cid}/start"))
-        return {"started": True, "id": cid}
+    async def get_container(self, ref: str) -> dict[str, Any]:
+        cid = await self._resolve(ref)
+        c = await self._request("GET", self._docker_path(f"/containers/{cid}/json"))
+        return {"id": c["Id"][:12], "name": c["Name"].lstrip("/"), "status": c["State"]["Status"],
+                "image": c["Config"]["Image"], "ports": [], "attrs": c}
 
-    def stop_container(self, name_or_id: str, timeout: int = 10) -> dict[str, Any]:
-        cid = self._resolve_id(name_or_id)
-        self._request(
-            "POST",
-            self._docker_path(f"/containers/{cid}/stop"),
-            params={"t": timeout},
-        )
-        return {"stopped": True, "id": cid}
+    async def action(self, ref: str, verb: str, timeout: int = 10) -> dict[str, Any]:
+        cid = await self._resolve(ref)
+        if verb == "remove":
+            await self._request("DELETE", self._docker_path(f"/containers/{cid}"))
+        else:
+            params = {"t": timeout} if verb in ("stop", "restart") else None
+            await self._request("POST", self._docker_path(f"/containers/{cid}/{verb}"), params=params)
+        return {"name": ref.lstrip("/"), "id": cid[:12]}
 
-    def restart_container(self, name_or_id: str, timeout: int = 10) -> dict[str, Any]:
-        cid = self._resolve_id(name_or_id)
-        self._request(
-            "POST",
-            self._docker_path(f"/containers/{cid}/restart"),
-            params={"t": timeout},
-        )
-        return {"restarted": True, "id": cid}
-
-    def remove_container(self, name_or_id: str) -> dict[str, Any]:
-        cid = self._resolve_id(name_or_id)
-        self._request("DELETE", self._docker_path(f"/containers/{cid}"))
-        return {"removed": True, "id": cid}
-
-    def container_logs(self, name_or_id: str, tail: int = 50, since: str = "") -> dict[str, Any]:
-        cid = self._resolve_id(name_or_id)
+    async def logs(self, ref: str, tail: int, since: str) -> dict[str, Any]:
+        cid = await self._resolve(ref)
         params: dict[str, Any] = {"tail": tail, "stdout": 1, "stderr": 1, "timestamps": 1}
         if since:
             params["since"] = since
-        with httpx.Client(timeout=30, headers=self._headers) as client:
-            resp = client.get(
-                self._docker_path(f"/containers/{cid}/logs"),
-                params=params,
-            )
-            resp.raise_for_status()
-            text = resp.text
-        lines = text.strip().split("\n") if text.strip() else []
-        return {"container": name_or_id, "lines": len(lines), "logs": lines[-tail:]}
+        try:
+            async with self.http() as client:
+                r = await client.get(self._docker_path(f"/containers/{cid}/logs"), params=params,
+                                     headers={"X-API-Key": self.token})
+        except httpx.HTTPError as e:
+            raise HomelabError(MODULE, "unreachable", f"could not reach Portainer ({type(e).__name__}).")
+        text = r.text.strip()
+        return {"name": ref, "lines": text.split("\n") if text else []}
 
-    def container_stats(self, name_or_id: str) -> dict[str, Any]:
-        cid = self._resolve_id(name_or_id)
-        stats = self._request(
-            "GET",
-            self._docker_path(f"/containers/{cid}/stats"),
-            params={"stream": "false"},
-        )
-        return {"container": name_or_id, "stats": stats}
+    async def stats(self, ref: str) -> dict[str, Any]:
+        cid = await self._resolve(ref)
+        raw = await self._request("GET", self._docker_path(f"/containers/{cid}/stats"), params={"stream": "false"})
+        return {"name": ref, **stats_from_raw(raw)}
 
-    def list_images(self) -> list[dict[str, Any]]:
-        raw = self._request("GET", self._docker_path("/images/json"))
-        return [
-            {
-                "id": i["Id"][:12],
-                "tags": i.get("RepoTags") or [],
-                "size_mb": round(i.get("Size", 0) / 1024 / 1024, 1),
-            }
-            for i in raw
-        ]
+    async def list_images(self) -> list[dict[str, Any]]:
+        raw = await self._request("GET", self._docker_path("/images/json"))
+        return [{"id": i["Id"][:12], "tags": i.get("RepoTags") or [],
+                 "size_mb": round(i.get("Size", 0) / 1024 / 1024, 1)} for i in raw]
 
-    def pull_image(self, image: str, tag: str = "latest") -> dict[str, Any]:
+    async def pull(self, image: str, tag: str) -> dict[str, Any]:
         ref = f"{image}:{tag}" if ":" not in image else image
-        self._request(
-            "POST",
-            self._docker_path("/images/create"),
-            params={"fromImage": ref},
-        )
-        return {"pulled": True, "image": ref}
+        await self._request("POST", self._docker_path("/images/create"), params={"fromImage": ref})
+        return {"image": ref}
 
-    def remove_image(self, image: str, force: bool = False) -> dict[str, Any]:
-        self._request(
-            "DELETE",
-            self._docker_path(f"/images/{image}"),
-            params={"force": 1 if force else 0},
-        )
-        return {"removed": True, "image": image}
+    async def remove_image(self, image: str, force: bool) -> dict[str, Any]:
+        await self._request("DELETE", self._docker_path(f"/images/{image}"), params={"force": 1 if force else 0})
+        return {"image": image}
 
-    def list_volumes(self) -> list[dict[str, Any]]:
-        raw = self._request("GET", self._docker_path("/volumes"))
-        return [
-            {"name": v["Name"], "driver": v.get("Driver", "")}
-            for v in raw.get("Volumes", [])
-        ]
+    async def list_volumes(self) -> list[dict[str, Any]]:
+        raw = await self._request("GET", self._docker_path("/volumes"))
+        return [{"name": v["Name"], "driver": v.get("Driver", "")} for v in raw.get("Volumes") or []]
 
-    def list_networks(self) -> list[dict[str, Any]]:
-        raw = self._request("GET", self._docker_path("/networks"))
-        return [
-            {"id": n["Id"][:12], "name": n["Name"], "driver": n.get("Driver", "")}
-            for n in raw
-        ]
+    async def list_networks(self) -> list[dict[str, Any]]:
+        raw = await self._request("GET", self._docker_path("/networks"))
+        return [{"id": n["Id"][:12], "name": n["Name"], "driver": n.get("Driver", "")} for n in raw]
 
-    def prune_containers(self) -> dict[str, Any]:
-        result = self._request("POST", self._docker_path("/containers/prune"))
-        return {"pruned": True, **result}
+    async def prune_containers(self) -> dict[str, Any]:
+        result = await self._request("POST", self._docker_path("/containers/prune"))
+        return {"deleted": result.get("ContainersDeleted") or []}
 
-    def prune_images(self) -> dict[str, Any]:
-        result = self._request("POST", self._docker_path("/images/prune"))
-        return {"pruned": True, **result}
+    async def prune_images(self) -> dict[str, Any]:
+        result = await self._request("POST", self._docker_path("/images/prune"))
+        return {"space_reclaimed": result.get("SpaceReclaimed", 0)}
 
-    def list_stacks(self) -> list[dict[str, Any]]:
-        raw = self._request("GET", f"{self._base}/api/stacks")
-        return [
-            {
-                "id": s.get("Id"),
-                "name": s.get("Name"),
-                "status": s.get("Status"),
-                "type": s.get("Type"),
-            }
-            for s in raw
-        ]
+    async def list_stacks(self) -> list[dict[str, Any]]:
+        raw = await self._request("GET", f"{self.base}/api/stacks")
+        return [{"id": str(s.get("Id")), "name": s.get("Name"), "status": str(s.get("Status")),
+                 "type": str(s.get("Type"))} for s in raw]
 
-    def get_stack(self, stack_id: int) -> dict[str, Any]:
-        stack = self._request("GET", f"{self._base}/api/stacks/{stack_id}")
-        file = self._request("GET", f"{self._base}/api/stacks/{stack_id}/file")
-        return {"stack": stack, "compose_file": file}
+    async def get_stack(self, stack_id: int) -> dict[str, Any]:
+        stack = await self._request("GET", f"{self.base}/api/stacks/{stack_id}")
+        file = await self._request("GET", f"{self.base}/api/stacks/{stack_id}/file")
+        return {"stack": stack, "compose_file": file.get("StackFileContent")}
 
 
-_backend: DockerBackend | None = None
-
-
-def get_backend() -> DockerBackend:
-    global _backend
-    if _backend is None:
-        if config.docker_backend == "portainer":
-            _backend = PortainerBackend()
-        else:
-            _backend = SocketBackend()
-    return _backend
+def build_backend(config: Config, http: HttpFactory, docker_factory: Callable[[str], Any]):
+    if config.get(MODULE, "portainer_url") and config.get(MODULE, "portainer_token"):
+        return PortainerBackend(config, http)
+    return SocketBackend(config.get(MODULE, "host") or DEFAULT_HOST, docker_factory)

@@ -1,370 +1,245 @@
-"""Home Assistant module — comprehensive control and configuration.
+"""Home Assistant module (opt-in, off by default): entities, automations and scripts, system info.
 
-Provides tools for:
-- Entity control (lights, switches, covers, climate, media players)
-- Automation management (list, create, update, delete, trigger)
-- Script management (list, create, update, delete, run)
-- State queries and device discovery
-- Service calls (any domain/service combination)
+Every change (service call, turn on/off/toggle, trigger, reload) needs the person's approval, or
+HOMELAB_HOME_ASSISTANT_ALLOW_WRITES=true. Home Assistant has no API to create automations, so
+action=create only returns the YAML for you to paste into automations.yaml.
 """
 
-import json
-import logging
-from typing import Any
+from __future__ import annotations
+
+from typing import Any, Literal
 
 import httpx
 import yaml
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
+from pydantic import BaseModel
 
-from homelab_infra_mcp.config import _read_secret, config
-from homelab_infra_mcp.safety import check_mode, is_dry_run
+from homelab_infra_mcp.config import Config
+from homelab_infra_mcp.errors import HomelabError
+from homelab_infra_mcp.models import Change, page, run_change
+from homelab_infra_mcp.modules import ALLOW_WRITES, Module, Setting
+from homelab_infra_mcp.runtime import HttpFactory, Runtime
 
-logger = logging.getLogger("homelab-infra-mcp")
+MODULE = "home_assistant"
+DEFAULT_URL = "http://homeassistant.local:8123"
+READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 
 
-def _read_ha_token() -> str | None:
-    """HA token from HA_TOKEN or the ha_token file in the secrets dir. None if unset."""
-    return _read_secret("ha_token") or None
+class HomeAssistantClient:
+    def __init__(self, config: Config, http: HttpFactory):
+        self.config = config
+        self.http = http
+
+    def base(self) -> str:
+        return (self.config.get(MODULE, "url") or DEFAULT_URL).rstrip("/")
+
+    async def request(self, method: str, path: str, *, data: Any = None, params: dict | None = None) -> Any:
+        token = self.config.require(MODULE, "token")["token"]
+        try:
+            async with self.http() as client:
+                r = await client.request(method, f"{self.base()}{path}", json=data, params=params,
+                                         headers={"Authorization": f"Bearer {token}"})
+        except httpx.HTTPError as e:
+            raise HomelabError(MODULE, "unreachable", f"could not reach Home Assistant ({type(e).__name__}).",
+                               "check HOMELAB_HOME_ASSISTANT_URL and that Home Assistant is running.")
+        if r.status_code in (401, 403):
+            raise HomelabError(MODULE, "auth_failed", f"Home Assistant returned {r.status_code}.",
+                               "check HOMELAB_HOME_ASSISTANT_TOKEN (a long-lived access token).")
+        if r.status_code >= 400:
+            raise HomelabError(MODULE, "api_error", f"Home Assistant returned {r.status_code}: {r.text[:200]}")
+        return r.json() if r.content else {}
 
 
-async def _hass_api_call(
-    method: str, path: str, data: dict | None = None, params: dict | None = None
-) -> dict:
-    """Make a Home Assistant REST API call.
+class Entity(BaseModel):
+    entity_id: str
+    state: str | None = None
+    name: str | None = None
 
-    Args:
-        method: HTTP method (GET, POST, PUT, DELETE)
-        path: API path (e.g., '/api/states')
-        data: JSON body for POST/PUT/DELETE requests
-        params: Query parameters
 
-    Returns:
-        dict with success status and result or error message
-    """
-    token = _read_ha_token()
-    if not token:
-        return {
-            "success": False,
-            "error": "Home Assistant token not set (HA_TOKEN, or ha_token in HOMELAB_SECRETS_DIR)"
-        }
+class EntitiesResult(BaseModel):
+    items: list[Entity] = []
+    detail: dict[str, Any] | None = None  # get: the full state, with attributes
+    total: int | None = None
+    has_more: bool = False
+    change: Change | None = None
 
-    url = f"{config.home_assistant_url}{path}"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            if method == "GET":
-                resp = await client.get(url, headers=headers, params=params)
-            elif method == "POST":
-                resp = await client.post(url, headers=headers, json=data)
-            elif method == "PUT":
-                resp = await client.put(url, headers=headers, json=data)
-            elif method == "DELETE":
-                resp = await client.delete(url, headers=headers, json=data)
+class AutomationsResult(BaseModel):
+    items: list[Entity] = []
+    yaml: str | None = None  # action=create: the YAML to paste into automations.yaml or scripts.yaml
+    total: int | None = None
+    has_more: bool = False
+    change: Change | None = None
+
+
+class SystemResult(BaseModel):
+    action: str
+    data: Any = None
+
+
+def _entity(s: dict) -> Entity:
+    return Entity(entity_id=s.get("entity_id", ""), state=s.get("state"),
+                  name=(s.get("attributes") or {}).get("friendly_name"))
+
+
+def _domain_of(entity_id: str) -> str:
+    return entity_id.split(".", 1)[0] if "." in entity_id else "homeassistant"
+
+
+class HomeAssistantModule(Module):
+    def __init__(self) -> None:
+        super().__init__(
+            name=MODULE,
+            summary="Home Assistant: entities, automations and scripts, and system info. Off by default.",
+            default_enabled=False,
+            settings=[
+                Setting("url", f"Base URL of Home Assistant. Default {DEFAULT_URL}.", required=False),
+                Setting("token", "Long-lived access token from your Home Assistant profile.", secret=True),
+                ALLOW_WRITES,
+            ],
+            tools={
+                "ha_entities": "List, get or search entities; call a service; turn on, off or toggle an entity.",
+                "ha_automations": "List automations or scripts; trigger or reload them; preview automation YAML.",
+                "ha_system": "Read the Home Assistant config, the available services, or check the config.",
+            },
+        )
+
+    def register(self, mcp: FastMCP, runtime: Runtime) -> None:
+        config = runtime.config
+
+        @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
+        async def ha_entities(
+            ctx: Context,
+            action: Literal["list", "get", "search", "call_service", "turn_on", "turn_off", "toggle"] = "list",
+            entity_id: str = "",
+            domain: str = "",
+            query: str = "",
+            service: str = "",
+            service_data: dict[str, Any] | None = None,
+            limit: int = 20,
+            offset: int = 0,
+            dry_run: bool = False,
+        ) -> EntitiesResult:
+            """Entities. list, get and search are read-only. call_service, turn_on, turn_off and toggle change
+            devices and need the person's approval (or HOMELAB_HOME_ASSISTANT_ALLOW_WRITES=true).
+            call_service needs domain and service; turn_on, turn_off and toggle need entity_id."""
+            ha = runtime.home_assistant()
+            if action in ("list", "search", "get"):
+                states = await ha.request("GET", "/api/states")
+                if action == "get":
+                    if not entity_id:
+                        raise HomelabError(MODULE, "bad_input", "entity_id is required for get.", "pass e.g. light.kitchen.")
+                    raw = next((s for s in states if s.get("entity_id") == entity_id), None)
+                    if raw is None:
+                        raise HomelabError(MODULE, "not_found", f"no entity {entity_id}.", "use action=search to find it.")
+                    return EntitiesResult(items=[_entity(raw)], detail=raw, total=1)
+                rows = states
+                if domain:
+                    rows = [s for s in rows if s.get("entity_id", "").startswith(f"{domain}.")]
+                if action == "search":
+                    q = query.lower()
+                    rows = [s for s in rows if q in s.get("entity_id", "").lower()
+                            or q in ((s.get("attributes") or {}).get("friendly_name") or "").lower()]
+                items, total, more = page([_entity(s) for s in rows], limit, offset)
+                return EntitiesResult(items=items, total=total, has_more=more)
+
+            data = dict(service_data or {})
+            if action == "call_service":
+                if not (domain and service):
+                    raise HomelabError(MODULE, "bad_input", "call_service needs domain and service.",
+                                       "for example domain=light service=turn_on entity_id=light.kitchen.")
+                svc_domain, svc = domain, service
             else:
-                return {"success": False, "error": f"Unsupported method: {method}"}
+                if not entity_id:
+                    raise HomelabError(MODULE, "bad_input", f"{action} needs entity_id.", "pass e.g. switch.fan.")
+                svc_domain, svc = _domain_of(entity_id), action
+            if entity_id:
+                data["entity_id"] = entity_id
+            summary = f"call Home Assistant service {svc_domain}.{svc}" + (f" on {entity_id}" if entity_id else "") \
+                + (f" with {data}" if len(data) > (1 if entity_id else 0) else "")
 
-            if resp.status_code in (200, 201):
-                return {
-                    "success": True,
-                    "data": resp.json() if resp.content else {},
-                    "status_code": resp.status_code
-                }
-            else:
-                return {
-                    "success": False,
-                    "status_code": resp.status_code,
-                    "error": resp.text or "Unknown error"
-                }
-    except httpx.ConnectError:
-        return {
-            "success": False,
-            "error": f"Cannot reach Home Assistant at {config.home_assistant_url}. Is it running?"
-        }
-    except httpx.TimeoutException:
-        return {
-            "success": False,
-            "error": f"Timeout connecting to Home Assistant at {config.home_assistant_url}"
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "error": f"Home Assistant API error: {str(e)}"
-        }
+            async def perform():
+                res = await ha.request("POST", f"/api/services/{svc_domain}/{svc}", data=data)
+                return None, {"changed_states": len(res) if isinstance(res, list) else None}
 
+            change = await run_change(ctx, config, module=MODULE, action=action, summary=summary,
+                                      perform=perform, dry_run=dry_run, preview={"service": f"{svc_domain}.{svc}", "data": data})
+            return EntitiesResult(change=change)
 
-def register(mcp):
-    """Register Home Assistant tools with the MCP server."""
+        @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
+        async def ha_automations(
+            ctx: Context,
+            action: Literal["list", "trigger", "create", "reload"] = "list",
+            kind: Literal["automation", "script"] = "automation",
+            entity_id: str = "",
+            automation_id: str = "",
+            alias: str = "",
+            triggers: list[dict[str, Any]] | None = None,
+            conditions: list[dict[str, Any]] | None = None,
+            actions: list[dict[str, Any]] | None = None,
+            service_data: dict[str, Any] | None = None,
+            limit: int = 20,
+            offset: int = 0,
+            dry_run: bool = False,
+        ) -> AutomationsResult:
+            """Automations or scripts. list is read-only. trigger runs one now (scripts take service_data as
+            variables). reload re-reads the YAML files. create never writes: it returns the automation YAML
+            for you to save. trigger and reload need the person's approval (or ALLOW_WRITES=true)."""
+            ha = runtime.home_assistant()
+            prefix = f"{kind}."
+            if action == "list":
+                states = await ha.request("GET", "/api/states")
+                rows = [_entity(s) for s in states if s.get("entity_id", "").startswith(prefix)]
+                items, total, more = page(rows, limit, offset)
+                return AutomationsResult(items=items, total=total, has_more=more)
+            if action == "create":
+                if not automation_id.strip() or not alias.strip() or not triggers or not actions:
+                    raise HomelabError(MODULE, "bad_input", "create needs automation_id, alias, triggers and actions.",
+                                       "pass all four; the result is YAML to paste into automations.yaml.")
+                cfg: dict[str, Any] = {"id": automation_id.strip(), "alias": alias.strip(), "trigger": triggers,
+                                       "action": actions}
+                if conditions:
+                    cfg["condition"] = conditions
+                return AutomationsResult(yaml=yaml.safe_dump([cfg], sort_keys=False))
+            if action == "trigger":
+                if not entity_id.startswith(prefix):
+                    raise HomelabError(MODULE, "bad_input", f"entity_id must start with {prefix!r}.",
+                                       f"for example {prefix}morning.")
+                if kind == "automation":
+                    path, data = "/api/services/automation/trigger", {"entity_id": entity_id}
+                else:
+                    path, data = "/api/services/script/turn_on", {"entity_id": entity_id, **(service_data or {})}
+                summary = f"run {kind} {entity_id}" + (f" with {service_data}" if service_data else "")
 
-    # ============================================================================
-    # Entity Control
-    # ============================================================================
+                async def perform():
+                    await ha.request("POST", path, data=data)
+                    return None, None
 
-    @mcp.tool()
-    async def hass_get_states() -> str:
-        """List all Home Assistant entities with their current state and attributes."""
-        result = await _hass_api_call("GET", "/api/states")
-        return json.dumps(result)
+                change = await run_change(ctx, config, module=MODULE, action=action, summary=summary,
+                                          perform=perform, dry_run=dry_run, preview={"path": path, "data": data})
+                return AutomationsResult(change=change)
+            path = f"/api/services/{kind}/reload"
+            summary = f"reload {kind} configuration from the YAML files"
 
-    @mcp.tool()
-    async def hass_get_state(entity_id: str) -> str:
-        """Get the state and attributes of a specific entity.
+            async def perform():
+                await ha.request("POST", path)
+                return None, None
 
-        Args:
-            entity_id: Entity ID (e.g., 'light.bedroom_3', 'switch.fan')
-        """
-        result = await _hass_api_call("GET", f"/api/states/{entity_id}")
-        return json.dumps(result)
+            change = await run_change(ctx, config, module=MODULE, action=action, summary=summary,
+                                      perform=perform, dry_run=dry_run, preview={"path": path})
+            return AutomationsResult(change=change)
 
-    @mcp.tool()
-    async def hass_call_service(
-        domain: str, service: str, entity_id: str | None = None, **kwargs
-    ) -> str:
-        """Call any Home Assistant service with optional parameters.
-
-        Args:
-            domain: Service domain (e.g., 'light', 'switch', 'automation')
-            service: Service name (e.g., 'turn_on', 'turn_off', 'toggle')
-            entity_id: Optional entity ID to target
-            **kwargs: Additional service data (brightness, color_temp, etc.)
-
-        Examples:
-            hass_call_service('light', 'turn_on', 'light.bedroom_3', brightness=128)
-            hass_call_service('automation', 'trigger', 'automation.morning')
-        """
-        data = kwargs.copy()
-        if entity_id:
-            data["entity_id"] = entity_id
-
-        result = await _hass_api_call("POST", f"/api/services/{domain}/{service}", data=data)
-        return json.dumps(result)
-
-    @mcp.tool()
-    async def hass_turn_on(entity_id: str, **kwargs) -> str:
-        """Turn on a Home Assistant entity with optional parameters.
-
-        Args:
-            entity_id: Entity ID (e.g., 'light.bedroom_3', 'switch.fan')
-            **kwargs: Optional parameters (brightness, color_temp_kelvin, rgb_color, etc.)
-
-        Examples:
-            hass_turn_on('light.bedroom_3', brightness=128, color_temp_kelvin=2700)
-        """
-        data = {"entity_id": entity_id}
-        data.update(kwargs)
-
-        # Determine domain from entity_id
-        domain = entity_id.split(".")[0] if "." in entity_id else "homeassistant"
-
-        result = await _hass_api_call("POST", f"/api/services/{domain}/turn_on", data=data)
-        return json.dumps(result)
-
-    @mcp.tool()
-    async def hass_turn_off(entity_id: str) -> str:
-        """Turn off a Home Assistant entity.
-
-        Args:
-            entity_id: Entity ID (e.g., 'light.bedroom_3', 'switch.fan')
-        """
-        domain = entity_id.split(".")[0] if "." in entity_id else "homeassistant"
-        result = await _hass_api_call(
-            "POST", f"/api/services/{domain}/turn_off", data={"entity_id": entity_id}
-        )
-        return json.dumps(result)
-
-    @mcp.tool()
-    async def hass_toggle(entity_id: str) -> str:
-        """Toggle a Home Assistant entity (on -> off, off -> on).
-
-        Args:
-            entity_id: Entity ID (e.g., 'light.bedroom_3', 'switch.fan')
-        """
-        domain = entity_id.split(".")[0] if "." in entity_id else "homeassistant"
-        result = await _hass_api_call(
-            "POST", f"/api/services/{domain}/toggle", data={"entity_id": entity_id}
-        )
-        return json.dumps(result)
-
-    # ============================================================================
-    # Automation Management
-    # ============================================================================
-
-    @mcp.tool()
-    async def hass_list_automations() -> str:
-        """List all automations with their current state and configuration."""
-        result = await _hass_api_call("GET", "/api/states")
-        if result.get("success"):
-            automations = [
-                s for s in result["data"] if s.get("entity_id", "").startswith("automation.")
-            ]
-            return json.dumps({"success": True, "count": len(automations), "automations": automations})
-        return json.dumps(result)
-
-    @mcp.tool()
-    async def hass_trigger_automation(entity_id: str) -> str:
-        """Trigger/run an automation immediately.
-
-        Args:
-            entity_id: Automation entity ID (e.g., 'automation.morning')
-        """
-        result = await _hass_api_call(
-            "POST", "/api/services/automation/trigger", data={"entity_id": entity_id}
-        )
-        return json.dumps(result)
-
-    @mcp.tool()
-    async def hass_create_automation(
-        id: str, alias: str, trigger: list[dict], action: list[dict], condition: list[dict] | None = None
-    ) -> str:
-        """Create a new automation via the config API.
-
-        Args:
-            id: Unique automation ID (e.g., 'bedroom_light_voice')
-            alias: Human-readable name
-            trigger: List of trigger configurations
-            condition: Optional list of conditions
-            action: List of actions to execute
-
-        Note: This requires the automation to be added to configuration.yaml or
-        a separate automations.yaml file. For dynamic creation, use hass_update_config.
-        """
-        blocked = check_mode("write")
-        if blocked:
-            return json.dumps({"error": blocked})
-        if is_dry_run():
-            return json.dumps({
-                "dry_run": True,
-                "would_create": {"id": id, "alias": alias}
-            })
-
-        automation_config = {
-            "id": id,
-            "alias": alias,
-            "trigger": trigger,
-            "action": action
-        }
-        if condition:
-            automation_config["condition"] = condition
-
-        return json.dumps({
-            "success": False,
-            "error": "Direct automation creation requires file system access. Use hass_update_config instead.",
-            "config": automation_config,
-            "yaml": yaml.dump([automation_config])
-        })
-
-    # ============================================================================
-    # Script Management
-    # ============================================================================
-
-    @mcp.tool()
-    async def hass_list_scripts() -> str:
-        """List all scripts with their current state."""
-        result = await _hass_api_call("GET", "/api/states")
-        if result.get("success"):
-            scripts = [
-                s for s in result["data"] if s.get("entity_id", "").startswith("script.")
-            ]
-            return json.dumps({"success": True, "count": len(scripts), "scripts": scripts})
-        return json.dumps(result)
-
-    @mcp.tool()
-    async def hass_run_script(entity_id: str, **kwargs) -> str:
-        """Run a script with optional parameters.
-
-        Args:
-            entity_id: Script entity ID (e.g., 'script.morning_routine')
-            **kwargs: Optional variables to pass to the script
-        """
-        data = {"entity_id": entity_id}
-        data.update(kwargs)
-
-        result = await _hass_api_call("POST", "/api/services/script/turn_on", data=data)
-        return json.dumps(result)
-
-    # ============================================================================
-    # Discovery & Search
-    # ============================================================================
-
-    @mcp.tool()
-    async def hass_search_entities(query: str, domain: str | None = None) -> str:
-        """Search for entities by name or entity_id with optional domain filter.
-
-        Args:
-            query: Search term (matches entity_id or friendly_name)
-            domain: Optional domain filter (e.g., 'light', 'switch', 'automation')
-
-        Examples:
-            hass_search_entities('bedroom') - find all bedroom entities
-            hass_search_entities('bedroom', 'light') - find bedroom lights only
-        """
-        result = await _hass_api_call("GET", "/api/states")
-        if not result.get("success"):
-            return json.dumps(result)
-
-        entities = result["data"]
-        query_lower = query.lower()
-
-        # Filter by domain if specified
-        if domain:
-            entities = [e for e in entities if e.get("entity_id", "").startswith(f"{domain}.")]
-
-        # Search in entity_id and friendly_name
-        matches = [
-            e for e in entities
-            if query_lower in e.get("entity_id", "").lower()
-            or query_lower in e.get("attributes", {}).get("friendly_name", "").lower()
-        ]
-
-        return json.dumps({
-            "success": True,
-            "query": query,
-            "domain": domain,
-            "count": len(matches),
-            "matches": matches
-        })
-
-    # ============================================================================
-    # Configuration & Services
-    # ============================================================================
-
-    @mcp.tool()
-    async def hass_get_config() -> str:
-        """Get Home Assistant configuration details."""
-        result = await _hass_api_call("GET", "/api/config")
-        return json.dumps(result)
-
-    @mcp.tool()
-    async def hass_list_services() -> str:
-        """List all available services across all domains."""
-        result = await _hass_api_call("GET", "/api/services")
-        return json.dumps(result)
-
-    @mcp.tool()
-    async def hass_check_config() -> str:
-        """Check if the current configuration is valid."""
-        result = await _hass_api_call("POST", "/api/services/homeassistant/check_config")
-        return json.dumps(result)
-
-    @mcp.tool()
-    async def hass_reload_automation() -> str:
-        """Reload automation configuration from YAML files."""
-        blocked = check_mode("write")
-        if blocked:
-            return json.dumps({"error": blocked})
-        if is_dry_run():
-            return json.dumps({"dry_run": True, "would_reload": "automation"})
-
-        result = await _hass_api_call("POST", "/api/services/automation/reload")
-        return json.dumps(result)
-
-    @mcp.tool()
-    async def hass_reload_script() -> str:
-        """Reload script configuration from YAML files."""
-        blocked = check_mode("write")
-        if blocked:
-            return json.dumps({"error": blocked})
-        if is_dry_run():
-            return json.dumps({"dry_run": True, "would_reload": "script"})
-
-        result = await _hass_api_call("POST", "/api/services/script/reload")
-        return json.dumps(result)
+        @mcp.tool(annotations=READ_ONLY)
+        async def ha_system(
+            action: Literal["config", "services", "check_config"] = "config",
+        ) -> SystemResult:
+            """Read-only system information: the Home Assistant config, the services available, or whether the
+            current configuration is valid (check_config changes nothing)."""
+            ha = runtime.home_assistant()
+            if action == "config":
+                return SystemResult(action=action, data=await ha.request("GET", "/api/config"))
+            if action == "services":
+                return SystemResult(action=action, data=await ha.request("GET", "/api/services"))
+            return SystemResult(action=action,
+                                data=await ha.request("POST", "/api/services/homeassistant/check_config"))

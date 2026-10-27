@@ -1,21 +1,81 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.seayniclabs/homelab-infra-mcp",
-  "title": "Vault MCP",
-  "description": "Obsidian vault access — read, search, and manage notes, Docker, and n8n workflows.",
+  "description": "Homelab: proxy hosts, Docker containers and Cloudflare DNS, with approval for every change.",
   "repository": {
     "url": "https://github.com/seayniclabs/homelab-infra-mcp",
     "source": "github"
   },
-  "version": "0.1.1",
+  "version": "2.0.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "homelab-infra-mcp",
-      "version": "0.1.1",
+      "version": "2.0.0",
       "transport": {
         "type": "stdio"
-      }
+      },
+      "environmentVariables": [
+        {
+          "name": "HOMELAB_PROXY_URL",
+          "description": "Nginx Proxy Manager address, e.g. http://localhost:81",
+          "isRequired": false
+        },
+        {
+          "name": "HOMELAB_PROXY_EMAIL",
+          "description": "Nginx Proxy Manager admin email",
+          "isRequired": false
+        },
+        {
+          "name": "HOMELAB_PROXY_PASSWORD",
+          "description": "Nginx Proxy Manager admin password",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "HOMELAB_DOCKER_HOST",
+          "description": "Docker engine address, e.g. unix:///var/run/docker.sock",
+          "isRequired": false
+        },
+        {
+          "name": "HOMELAB_DOCKER_PORTAINER_URL",
+          "description": "Portainer base URL, instead of the Docker socket",
+          "isRequired": false
+        },
+        {
+          "name": "HOMELAB_DOCKER_PORTAINER_TOKEN",
+          "description": "Portainer API key",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "HOMELAB_DNS_API_TOKEN",
+          "description": "Cloudflare API token with DNS edit permission",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "HOMELAB_DNS_ZONE_ID",
+          "description": "Default Cloudflare zone id",
+          "isRequired": false
+        },
+        {
+          "name": "HOMELAB_HOME_ASSISTANT_URL",
+          "description": "Home Assistant address (module is off by default)",
+          "isRequired": false
+        },
+        {
+          "name": "HOMELAB_HOME_ASSISTANT_TOKEN",
+          "description": "Home Assistant long-lived access token",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "HOMELAB_READ_ONLY",
+          "description": "true refuses every change",
+          "isRequired": false
+        }
+      ]
     }
   ]
 }

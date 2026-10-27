@@ -14,9 +14,11 @@ body:
     attributes:
       label: Module
       options:
-        - NPM
-        - Docker
-        - DNS
+        - proxy (Nginx Proxy Manager)
+        - docker
+        - dns (Cloudflare)
+        - home_assistant
+        - Workflows
         - Cross-Domain
         - New Module
     validations:

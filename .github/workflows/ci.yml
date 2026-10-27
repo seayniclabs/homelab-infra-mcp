@@ -1,17 +1,29 @@
-name: CI
-
-on:
-  pull_request:
-  push:
-    branches: [main]
-
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
   test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv -p ${{ matrix.python }} && uv pip install -e '.[dev]'
+      - run: .venv/bin/pytest -q
+  scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - run: pip install -e ".[test]"
-      - run: pytest --cov=src/homelab_infra_mcp --cov-report=term-missing
+          fetch-depth: 0
+      # The gitleaks CLI is free; the GitHub Action needs a license for organization repos.
+      - name: gitleaks (full history)
+        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --no-banner --redact
+      - name: Identifier scan
+        env:
+          IDENTIFIER_PATTERNS: ${{ secrets.IDENTIFIER_PATTERNS }}
+        run: python3 scripts/scan_identifiers.py .

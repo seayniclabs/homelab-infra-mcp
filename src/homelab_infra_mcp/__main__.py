@@ -1,4 +1,4 @@
-"""Entry point for `python -m homelab_infra_mcp`."""
+"""Entry point for ``python -m homelab_infra_mcp``."""
 
 from homelab_infra_mcp.server import main
 

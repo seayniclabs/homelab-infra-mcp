@@ -1,164 +1,184 @@
-"""Homelab Infrastructure MCP — main server with module loading."""
+"""Homelab server: one process, one tool per resource, plus discovery and health.
 
-import json
-import logging
-import sys
+Build it with ``build_server()``; run it with ``homelab-infra`` (stdio) or
+``homelab-infra --transport http`` (streamable HTTP).
+"""
+
+from __future__ import annotations
+
+import argparse
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+from pydantic import BaseModel
 
-from homelab_infra_mcp.config import config
-from homelab_infra_mcp.safety import run_confirmed_action, validate_confirmation
+from homelab_infra_mcp import __version__, workflows
+from homelab_infra_mcp.config import CORE, Config, config_path
+from homelab_infra_mcp.errors import HomelabError
+from homelab_infra_mcp.modules import Module, all_modules
+from homelab_infra_mcp.runtime import DockerFactory, HttpFactory, Runtime, default_docker, default_http
 
-logging.basicConfig(level=getattr(logging, config.log_level, logging.INFO))
-logger = logging.getLogger("homelab-infra-mcp")
-
-mcp = FastMCP(
-    "homelab-infra",
-    instructions="""\
-Homelab Infrastructure MCP — unified management for NPM, Docker/Portainer, and Cloudflare DNS.
-
-Cross-domain: expose_service, teardown_service, service_status, infrastructure_overview.
-Safety: set_mode (normal / read-only / dry-run), confirm_destructive for destructive ops.
-Use server_health to verify backend connectivity.
-""",
+INSTRUCTIONS = (
+    "Homelab runs your homelab's proxy (Nginx Proxy Manager), containers (Docker or Portainer) and DNS "
+    "(Cloudflare) from one server. Call homelab_modules first: it says which modules are on, which settings "
+    "are missing, and what each tool does. Read tools are safe to call freely. Changes are shown to the person "
+    "for approval before they run. Errors read 'homelab.<module>.<code>: <message> Fix: <hint>'."
 )
+READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
 
 
-@mcp.tool()
-def set_mode(mode: str) -> str:
-    """Switch operating mode: normal, readonly (read-only), or dryrun (dry-run)."""
-    aliases = {
-        "read-only": "readonly",
-        "dry-run": "dryrun",
-        "normal": "normal",
-        "readonly": "readonly",
-        "dryrun": "dryrun",
-    }
-    normalized = aliases.get(mode.strip().lower())
-    if not normalized:
-        return json.dumps({"error": f"Invalid mode: {mode}. Use normal, read-only, or dry-run."})
-    config.mode = normalized
-    return json.dumps({"mode": normalized, "message": f"Mode set to {normalized}."})
+class SettingInfo(BaseModel):
+    env_var: str
+    help: str
+    secret: bool
+    set: bool
+    writes_preapproved: bool | None = None
 
 
-@mcp.tool()
-def get_mode() -> str:
-    """Show the current operating mode."""
-    return json.dumps({"mode": config.mode})
+class ModuleInfo(BaseModel):
+    name: str
+    summary: str
+    enabled: bool
+    configured: bool
+    missing: list[str]
+    writes_preapproved: bool
+    tools: dict[str, str]
+    settings: list[SettingInfo] | None = None
 
 
-@mcp.tool()
-async def confirm_destructive(token: str) -> str:
-    """Confirm and execute a pending destructive operation."""
-    entry = validate_confirmation(token)
-    if entry is None:
-        return json.dumps({"error": "Invalid or expired confirmation token."})
+class ModulesResult(BaseModel):
+    version: str
+    read_only: bool
+    config_file: str
+    core_tools: dict[str, str]
+    modules: list[ModuleInfo]
+
+
+class ModuleHealth(BaseModel):
+    module: str
+    enabled: bool
+    healthy: bool | None = None  # None when the module is switched off
+    detail: dict[str, Any] | None = None
+    error: str | None = None
+
+
+class HealthResult(BaseModel):
+    version: str
+    modules: list[ModuleHealth]
+
+
+CORE_TOOLS = {
+    "homelab_modules": "Which modules are on, what settings are missing, and what each tool does.",
+    "homelab_health": "Connectivity and version for every enabled module.",
+    "expose_service": "Container check, optional Cloudflare CNAME, and proxy host, in one approved plan.",
+    "teardown_service": "Remove a service's proxy host and optional DNS record, in one approved plan.",
+    "service_status": "One view of a service: container, proxy hosts and DNS records.",
+    "infrastructure_overview": "Counts across Docker, the proxy and DNS.",
+}
+
+
+async def _probe(module: Module, runtime: Runtime) -> ModuleHealth:
+    missing = module.missing(runtime.config)
+    if missing:
+        return ModuleHealth(module=module.name, enabled=True, healthy=False,
+                            error=f"not_configured: missing {', '.join(missing)}")
     try:
-        result = await run_confirmed_action(entry)
-        return json.dumps({
-            "confirmed": True,
-            "action": entry["action"],
-            "result": result,
-        })
-    except Exception as e:
-        return json.dumps({"confirmed": False, "error": str(e)})
+        if module.name == "proxy":
+            npm = runtime.npm()
+            async with runtime.http() as client:
+                r = await client.get(f"{npm._base()}/api/")
+            return ModuleHealth(module=module.name, enabled=True, healthy=r.status_code == 200,
+                                detail={"status_code": r.status_code})
+        if module.name == "docker":
+            return ModuleHealth(module=module.name, enabled=True, healthy=True,
+                                detail=await runtime.docker().health())
+        if module.name == "dns":
+            res = await runtime.cloudflare().verify()
+            return ModuleHealth(module=module.name, enabled=True, healthy=res.get("status") == "active",
+                                detail={"token_status": res.get("status", "unknown")})
+        if module.name == "home_assistant":
+            ha = runtime.home_assistant()
+            await ha.request("GET", "/api/")
+            return ModuleHealth(module=module.name, enabled=True, healthy=True)
+    except HomelabError as e:
+        return ModuleHealth(module=module.name, enabled=True, healthy=False, error=str(e))
+    except Exception as e:  # never let one probe take the others down
+        return ModuleHealth(module=module.name, enabled=True, healthy=False, error=f"{type(e).__name__}: {e}")
+    return ModuleHealth(module=module.name, enabled=True, healthy=None)
 
 
-@mcp.tool()
-async def server_health() -> str:
-    """Health check for all backend APIs and server version."""
-    from homelab_infra_mcp import __version__
+def build_server(
+    config: Config | None = None,
+    http: HttpFactory = default_http,
+    docker: DockerFactory = default_docker,
+    modules: list[Module] | None = None,
+    **settings: Any,
+) -> FastMCP:
+    config = config or Config()
+    modules = modules if modules is not None else all_modules()
+    runtime = Runtime(config, http=http, docker=docker)
+    mcp = FastMCP("homelab", instructions=INSTRUCTIONS, **settings)
+    # FastMCP 1.x reports the SDK's version unless the low-level server is told otherwise.
+    mcp._mcp_server.version = __version__
 
-    results: dict = {
-        "version": __version__,
-        "mode": config.mode,
-        "modules": config.modules,
-        "docker_backend": config.docker_backend if "docker" in config.modules else None,
-    }
+    enabled = {m.name for m in modules if config.enabled(m.name, m.default_enabled)}
+    for m in modules:
+        if m.name in enabled:
+            m.register(mcp, runtime)
+    workflows.register(mcp, runtime, enabled)
 
-    if "npm" in config.modules:
-        try:
-            import httpx
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+    def homelab_modules(module: str | None = None) -> ModulesResult:
+        """Which modules are on, which settings are missing, whether writes are pre-approved, and what each tool
+        does. Pass a module name for its full settings list (values are never shown, only whether they are set)."""
+        infos = []
+        for m in modules:
+            if module and m.name != module:
+                continue
+            missing = m.missing(config)
+            info = ModuleInfo(
+                name=m.name, summary=m.summary, enabled=m.name in enabled,
+                configured=not missing, missing=missing, tools=m.tools,
+                writes_preapproved=config.flag(m.name, "allow_writes", False),
+            )
+            if module:
+                info.settings = [
+                    SettingInfo(env_var=s.env_var(m.name), help=s.help, secret=s.secret,
+                                set=bool(config.get(m.name, s.key)))
+                    for s in m.settings if s.key != "allow_writes"
+                ]
+            infos.append(info)
+        return ModulesResult(version=__version__, read_only=config.flag(CORE, "read_only", False),
+                             config_file=str(config_path(config.env)), core_tools=CORE_TOOLS, modules=infos)
 
-            async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.get(f"{config.npm_url}/api/")
-                results["npm"] = {"healthy": resp.status_code == 200}
-        except Exception as e:
-            results["npm"] = {"healthy": False, "error": str(e)}
+    @mcp.tool(annotations=READ_ONLY)
+    async def homelab_health() -> HealthResult:
+        """Connectivity and version for every enabled module. A module with missing settings reports the
+        variable it needs."""
+        results = []
+        for m in modules:
+            if m.name not in enabled:
+                results.append(ModuleHealth(module=m.name, enabled=False))
+                continue
+            results.append(await _probe(m, runtime))
+        return HealthResult(version=__version__, modules=results)
 
-    if "docker" in config.modules:
-        try:
-            from homelab_infra_mcp.modules.docker_backends import get_backend
-
-            results["docker"] = get_backend().health()
-        except Exception as e:
-            results["docker"] = {"healthy": False, "error": str(e)}
-
-    if "dns" in config.modules:
-        try:
-            from homelab_infra_mcp.modules.dns.cloudflare import _cf_get
-
-            data = await _cf_get("user/tokens/verify")
-            results["dns"] = {
-                "healthy": data.get("result", {}).get("status") == "active",
-            }
-        except Exception as e:
-            results["dns"] = {"healthy": False, "error": str(e)}
-
-    return json.dumps(results)
-
-
-def _register_modules() -> None:
-    from homelab_infra_mcp.modules.cross_domain import register as register_cross
-
-    register_cross(mcp)
-    logger.info("Cross-domain module loaded (4 tools)")
-
-    if "npm" in config.modules:
-        from homelab_infra_mcp.modules.npm import register as register_npm
-
-        register_npm(mcp)
-        logger.info("NPM module loaded (14 tools)")
-
-    if "docker" in config.modules:
-        from homelab_infra_mcp.modules.docker import register as register_docker
-
-        register_docker(mcp)
-        tool_count = 18 if config.docker_backend == "portainer" else 16
-        logger.info("Docker module loaded (%s tools, backend=%s)", tool_count, config.docker_backend)
-
-    if "dns" in config.modules:
-        from homelab_infra_mcp.modules.dns.cloudflare import register as register_dns
-
-        register_dns(mcp)
-        logger.info("DNS/Cloudflare module loaded (8 tools)")
-
-    if "home_assistant" in config.modules:
-        from homelab_infra_mcp.modules.home_assistant import register as register_ha
-
-        register_ha(mcp)
-        logger.info("Home Assistant module loaded (optional)")
+    return mcp
 
 
-def _startup_log() -> None:
-    from homelab_infra_mcp import __version__
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="homelab-infra", description=INSTRUCTIONS)
+    parser.add_argument("--transport", choices=["stdio", "http"], default="stdio")
+    parser.add_argument("--host", default="127.0.0.1", help="HTTP only. Keep 127.0.0.1 unless you add auth in front.")
+    parser.add_argument("--port", type=int, default=8200, help="HTTP only.")
+    parser.add_argument("--version", action="version", version=f"homelab-infra {__version__}")
+    args = parser.parse_args(argv)
 
-    print(f"[homelab-infra-mcp] v{__version__} mode={config.mode} modules={','.join(config.modules)}", file=sys.stderr)
-    if config.docker_backend == "portainer":
-        print(f"[homelab-infra-mcp] Docker backend: Portainer ({config.portainer_url})", file=sys.stderr)
+    if args.transport == "http":
+        build_server(host=args.host, port=args.port).run(transport="streamable-http")
     else:
-        print(f"[homelab-infra-mcp] Docker backend: socket ({config.docker_host})", file=sys.stderr)
-    for warning in config.validate_modules():
-        print(f"[homelab-infra-mcp] WARNING: {warning}", file=sys.stderr)
-
-
-def main() -> None:
-    _register_modules()
-    _startup_log()
-    if config.transport == "sse":
-        mcp.run(transport="sse")
-    else:
-        mcp.run(transport="stdio")
+        build_server().run(transport="stdio")
 
 
 if __name__ == "__main__":
