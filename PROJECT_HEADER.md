@@ -1,7 +1,7 @@
 # Homelab
 
 **Type:** MCP bundle (free, MIT)
-**Status:** live: 2.0.0 on PyPI (homelab-infra-mcp), GitHub and the MCP registry (2026-10-27)
+**Status:** live
 **Last Updated:** 2026-10-27
 
 ## Purpose
