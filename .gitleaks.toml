@@ -1,0 +1,8 @@
+# tool-manifest.lock.json holds SHA-256 digests of tool descriptions, not secrets.
+# gitleaks' generic-api-key rule matches their hex form, so the lock file is excluded from scanning.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "SHA-256 digests in the tool manifest lock"
+paths = ['''tool-manifest\.lock\.json$''']

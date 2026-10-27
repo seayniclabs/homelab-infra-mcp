@@ -53,11 +53,16 @@ class Module:
 
 def all_modules() -> list[Module]:
     from homelab_infra_mcp.modules.dns import DnsModule
+    from homelab_infra_mcp.modules.dns_filter import DnsFilterModule
     from homelab_infra_mcp.modules.docker import DockerModule
     from homelab_infra_mcp.modules.home_assistant import HomeAssistantModule
     from homelab_infra_mcp.modules.proxy import ProxyModule
+    from homelab_infra_mcp.modules.sso import SsoModule
+    from homelab_infra_mcp.modules.tunnel import TunnelModule
+    from homelab_infra_mcp.modules.uptime import UptimeModule
 
-    return [ProxyModule(), DockerModule(), DnsModule(), HomeAssistantModule()]
+    return [ProxyModule(), DockerModule(), DnsModule(), HomeAssistantModule(),
+            UptimeModule(), TunnelModule(), DnsFilterModule(), SsoModule()]
 
 
 ALLOW_WRITES = Setting(

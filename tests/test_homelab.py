@@ -27,7 +27,7 @@ HA = {"HOMELAB_HOME_ASSISTANT_URL": "http://ha.test:8123", "HOMELAB_HOME_ASSISTA
 
 CORE_AND_MODULE_TOOLS = {
     "homelab_modules", "homelab_health", "expose_service", "teardown_service", "service_status",
-    "infrastructure_overview", "proxy_hosts", "proxy_redirections", "proxy_certificates", "proxy_access_lists",
+    "infrastructure_overview", "diagnose_service", "proxy_hosts", "proxy_redirections", "proxy_certificates", "proxy_access_lists",
     "docker_containers", "docker_images", "docker_inventory", "dns_zones", "dns_records",
 }
 HA_TOOLS = {"ha_entities", "ha_automations", "ha_system"}
@@ -114,7 +114,7 @@ def test_homelab_modules_reports_missing_settings_and_hides_values():
     assert set(mods["proxy"]["missing"]) == {"HOMELAB_PROXY_EMAIL", "HOMELAB_PROXY_PASSWORD"}
     assert mods["dns"]["configured"] is True
     assert mods["home_assistant"]["enabled"] is False
-    assert out["read_only"] is False and out["version"] == "2.0.0"
+    assert out["read_only"] is False and out["version"] == "2.1.0"
 
 
 def test_homelab_modules_detail_never_leaks_secret_values():
@@ -740,7 +740,7 @@ def test_stdio_start_with_empty_env_reports_package_version(tmp_path):
                 listed = await session.list_tools()
                 return init.serverInfo.version, {t.name for t in listed.tools}
     version, names = asyncio.run(go())
-    assert version == "2.0.0"
+    assert version == "2.1.0"
     assert names == CORE_AND_MODULE_TOOLS
 
 

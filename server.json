@@ -1,80 +1,48 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.seayniclabs/homelab-infra-mcp",
-  "description": "Homelab: proxy hosts, Docker containers and Cloudflare DNS, with approval for every change.",
+  "description": "Homelab: Nginx Proxy Manager, Docker and Cloudflare DNS, with approval for every change.",
   "repository": {
     "url": "https://github.com/seayniclabs/homelab-infra-mcp",
     "source": "github"
   },
-  "version": "2.0.0",
+  "version": "2.1.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "homelab-infra-mcp",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
-        {
-          "name": "HOMELAB_PROXY_URL",
-          "description": "Nginx Proxy Manager address, e.g. http://localhost:81",
-          "isRequired": false
-        },
-        {
-          "name": "HOMELAB_PROXY_EMAIL",
-          "description": "Nginx Proxy Manager admin email",
-          "isRequired": false
-        },
-        {
-          "name": "HOMELAB_PROXY_PASSWORD",
-          "description": "Nginx Proxy Manager admin password",
-          "isRequired": false,
-          "isSecret": true
-        },
-        {
-          "name": "HOMELAB_DOCKER_HOST",
-          "description": "Docker engine address, e.g. unix:///var/run/docker.sock",
-          "isRequired": false
-        },
-        {
-          "name": "HOMELAB_DOCKER_PORTAINER_URL",
-          "description": "Portainer base URL, instead of the Docker socket",
-          "isRequired": false
-        },
-        {
-          "name": "HOMELAB_DOCKER_PORTAINER_TOKEN",
-          "description": "Portainer API key",
-          "isRequired": false,
-          "isSecret": true
-        },
-        {
-          "name": "HOMELAB_DNS_API_TOKEN",
-          "description": "Cloudflare API token with DNS edit permission",
-          "isRequired": false,
-          "isSecret": true
-        },
-        {
-          "name": "HOMELAB_DNS_ZONE_ID",
-          "description": "Default Cloudflare zone id",
-          "isRequired": false
-        },
-        {
-          "name": "HOMELAB_HOME_ASSISTANT_URL",
-          "description": "Home Assistant address (module is off by default)",
-          "isRequired": false
-        },
-        {
-          "name": "HOMELAB_HOME_ASSISTANT_TOKEN",
-          "description": "Home Assistant long-lived access token",
-          "isRequired": false,
-          "isSecret": true
-        },
-        {
-          "name": "HOMELAB_READ_ONLY",
-          "description": "true refuses every change",
-          "isRequired": false
-        }
+        { "name": "HOMELAB_PROXY_URL", "description": "Nginx Proxy Manager address, e.g. http://localhost:81", "isRequired": false },
+        { "name": "HOMELAB_PROXY_EMAIL", "description": "Nginx Proxy Manager admin email", "isRequired": false },
+        { "name": "HOMELAB_PROXY_PASSWORD", "description": "Nginx Proxy Manager admin password", "isRequired": false, "isSecret": true },
+        { "name": "HOMELAB_DOCKER_HOST", "description": "Docker engine address, e.g. unix:///var/run/docker.sock", "isRequired": false },
+        { "name": "HOMELAB_DOCKER_PORTAINER_URL", "description": "Portainer base URL, instead of the Docker socket", "isRequired": false },
+        { "name": "HOMELAB_DOCKER_PORTAINER_TOKEN", "description": "Portainer API key", "isRequired": false, "isSecret": true },
+        { "name": "HOMELAB_DOCKER_PORTAINER_ENDPOINT_ID", "description": "Portainer endpoint id (default 1)", "isRequired": false },
+        { "name": "HOMELAB_DNS_API_TOKEN", "description": "Cloudflare API token with DNS edit permission", "isRequired": false, "isSecret": true },
+        { "name": "HOMELAB_DNS_ZONE_ID", "description": "Default Cloudflare zone id", "isRequired": false },
+        { "name": "HOMELAB_HOME_ASSISTANT_URL", "description": "Home Assistant address (module is off by default)", "isRequired": false },
+        { "name": "HOMELAB_HOME_ASSISTANT_TOKEN", "description": "Home Assistant long-lived access token", "isRequired": false, "isSecret": true },
+        { "name": "HOMELAB_UPTIME_ENABLED", "description": "true turns on the Uptime Kuma module (off by default)", "isRequired": false },
+        { "name": "HOMELAB_UPTIME_URL", "description": "Uptime Kuma address", "isRequired": false },
+        { "name": "HOMELAB_UPTIME_API_KEY", "description": "Uptime Kuma API key, read from /metrics", "isRequired": false, "isSecret": true },
+        { "name": "HOMELAB_TUNNEL_ENABLED", "description": "true turns on the Cloudflare Tunnel module (off by default)", "isRequired": false },
+        { "name": "HOMELAB_TUNNEL_API_TOKEN", "description": "Cloudflare API token with tunnel edit permission", "isRequired": false, "isSecret": true },
+        { "name": "HOMELAB_TUNNEL_ACCOUNT_ID", "description": "Cloudflare account id that owns the tunnel", "isRequired": false },
+        { "name": "HOMELAB_TUNNEL_TUNNEL_ID", "description": "Cloudflare Tunnel id", "isRequired": false },
+        { "name": "HOMELAB_DNS_FILTER_ENABLED", "description": "true turns on the AdGuard Home module (off by default)", "isRequired": false },
+        { "name": "HOMELAB_DNS_FILTER_URL", "description": "AdGuard Home address", "isRequired": false },
+        { "name": "HOMELAB_DNS_FILTER_USERNAME", "description": "AdGuard Home login", "isRequired": false },
+        { "name": "HOMELAB_DNS_FILTER_PASSWORD", "description": "AdGuard Home password", "isRequired": false, "isSecret": true },
+        { "name": "HOMELAB_SSO_ENABLED", "description": "true turns on the Authentik module (off by default)", "isRequired": false },
+        { "name": "HOMELAB_SSO_URL", "description": "Authentik address", "isRequired": false },
+        { "name": "HOMELAB_SSO_TOKEN", "description": "Authentik API token", "isRequired": false, "isSecret": true },
+        { "name": "HOMELAB_SSO_FLOW_SLUG", "description": "Authentik authorization flow slug used for new proxy providers", "isRequired": false },
+        { "name": "HOMELAB_READ_ONLY", "description": "true refuses every change", "isRequired": false }
       ]
     }
   ]

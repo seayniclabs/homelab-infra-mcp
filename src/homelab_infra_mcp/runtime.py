@@ -54,3 +54,23 @@ class Runtime:
         from homelab_infra_mcp.modules.home_assistant import HomeAssistantClient
 
         return self.client("home_assistant", lambda: HomeAssistantClient(self.config, self.http))
+
+    def uptime(self):
+        from homelab_infra_mcp.modules.uptime import UptimeClient
+
+        return self.client("uptime", lambda: UptimeClient(self.config, self.http))
+
+    def tunnel(self):
+        from homelab_infra_mcp.modules.tunnel import TunnelClient
+
+        return self.client("tunnel", lambda: TunnelClient(self.config, self.http))
+
+    def dns_filter(self):
+        from homelab_infra_mcp.modules.dns_filter import DnsFilterClient
+
+        return self.client("dns_filter", lambda: DnsFilterClient(self.config, self.http))
+
+    def sso(self):
+        from homelab_infra_mcp.modules.sso import SsoClient
+
+        return self.client("sso", lambda: SsoClient(self.config, self.http))

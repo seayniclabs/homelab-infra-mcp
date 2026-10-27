@@ -52,7 +52,8 @@ async def run_change(
     """
     if dry_run:
         return Change(module=module, action=action, dry_run=True, summary=f"Would {summary}", detail=preview)
-    decision = await gate(ctx, config, modules or [module], f"Homelab ({module}) will {summary}.")
+    decision = await gate(ctx, config, modules or [module], f"Homelab ({module}) will {summary}.",
+                          tool=f"{module}.{action}")
     if not decision.approved:
         return Change(module=module, action=action, summary=summary, note=decision.note)
     change_id, detail = await perform()

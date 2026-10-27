@@ -2,6 +2,38 @@
 
 Homelab follows [semantic versioning](https://semver.org). Modules added after 2.0 ship switched off.
 
+## 2.1.0 — 2026-10-27
+
+**No breaking changes.** Every 2.0 tool name, action, argument and environment variable works as before. Upgrade by changing the pin to `homelab-infra-mcp==2.1.0`. No config edits are needed.
+
+### Migration notes
+
+- The four new modules ship **off by default**: `uptime`, `tunnel`, `dns_filter` and `sso`. Nothing new appears for your assistant until you set `HOMELAB_<MODULE>_ENABLED=true`.
+- `diagnose_service` is new and always on. It makes read-only calls only.
+- The default install now has 16 tools (15 in 2.0, plus `diagnose_service`).
+- Pinned installs (`uvx homelab-infra-mcp==2.0.0`) keep working until you change the pin.
+
+### New
+
+- **`diagnose_service`** (always on, read only). Takes `domain` and checks each hop of the path from the public name to the service. It returns one row per hop, marks the first failing hop, and prints the fix for it.
+- **`uptime_monitors`** (module `uptime`, off by default). Uptime Kuma monitors: `list` and `get` read monitors through `/metrics`; the module changes nothing. Pause and resume are not in 2.1: Uptime Kuma 2.x signs its socket in through a session, and no REST endpoint pauses monitors. Settings: `HOMELAB_UPTIME_URL`, `HOMELAB_UPTIME_API_KEY`.
+- **`tunnel_routes`** (module `tunnel`, off by default). Cloudflare Tunnel routes: `list` reads them, `add` and `remove` need approval. Settings: `HOMELAB_TUNNEL_API_TOKEN`, `HOMELAB_TUNNEL_ACCOUNT_ID`, `HOMELAB_TUNNEL_TUNNEL_ID`.
+- **`dns_filter_status`, `dns_filter_queries`, `dns_filter_rules`** (module `dns_filter`, off by default). AdGuard Home. Status and the query log are read only. `dns_filter_rules` lists blocked services and custom rules; `add` and `remove` need approval. Settings: `HOMELAB_DNS_FILTER_URL`, `HOMELAB_DNS_FILTER_USERNAME`, `HOMELAB_DNS_FILTER_PASSWORD`.
+- **`sso_applications`** (module `sso`, off by default). Authentik. `list` reads applications. `create` makes a proxy provider and an application for one host, and needs approval. Settings: `HOMELAB_SSO_URL`, `HOMELAB_SSO_TOKEN`, `HOMELAB_SSO_FLOW_SLUG`.
+- **`homelab-infra --doctor`**. Checks each enabled module's settings and reachability, Docker socket access and the TLS check. Prints a `FIX` line for each problem and exits 1 when something needs fixing.
+- **Approval log.** Every approve, decline and refusal is written to a local file. The default path is `~/.local/state/homelab/approvals.jsonl`, or `$XDG_STATE_HOME/homelab/approvals.jsonl`. Set `HOMELAB_APPROVAL_LOG` to choose another path.
+- **Skills.** Nine skills written for Homelab: `getting-started`, `expose-a-service-safely`, `homelab-health-check`, `homelab-troubleshooting`, `fix-and-deploy`, `containers`, `runbook`, `diagram` and `network-diagram`.
+- **Third-party skills**, under their own licenses: `systematic-debugging` (MIT), `cloudflare` and `cloudflare-one` (Apache-2.0), `dashmotion` (MIT) and `architecture-diagram` (MIT). See [CREDITS.md](CREDITS.md).
+- **Plugin.** `.claude-plugin/plugin.json` and `.mcp.json` install the server and the skills together. The `.mcp.json` pins `homelab-infra-mcp==2.1.0`.
+- **`CREDITS.md`** lists each third-party skill with its license and the pinned upstream commit. CI checks that every skill has its frontmatter, and that every third-party skill has a `LICENSE` file and a credit row.
+- **Tool manifest lock.** `tool-manifest.lock.json` records a hash of every tool description. CI fails when a description changes without the lock changing too.
+- **Security card.** The README carries a security card generated from the live server.
+
+### Changed
+
+- `server.json` describes version 2.1.0 and lists the settings for the new modules. Tokens, passwords and API keys are marked `isSecret`.
+- `SECURITY.md` covers the new modules' secrets, the local approval log, and the read-only behavior of `diagnose_service`.
+
 ## 2.0.0 — unreleased
 
 **Breaking.** The product is now called Homelab. The PyPI package name (`homelab-infra-mcp`) is unchanged. The tool surface, the environment variable names and the approval model all change. Migrate as described below.

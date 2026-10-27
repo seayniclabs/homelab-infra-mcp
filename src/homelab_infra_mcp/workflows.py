@@ -79,7 +79,8 @@ def register(mcp: FastMCP, runtime: Runtime, enabled: set[str]) -> None:
         if dry_run:
             return WorkflowResult(dry_run=True, planned=planned)
         modules = ["proxy"] + (["dns"] if use_dns else [])
-        decision = await gate(ctx, config, modules, "Homelab (expose_service) will:\n- " + "\n- ".join(planned))
+        decision = await gate(ctx, config, modules, "Homelab (expose_service) will:\n- " + "\n- ".join(planned),
+                              tool="expose_service")
         if not decision.approved:
             return WorkflowResult(planned=planned, note=decision.note)
 
@@ -173,7 +174,8 @@ def register(mcp: FastMCP, runtime: Runtime, enabled: set[str]) -> None:
             return WorkflowResult(errors=errors + ["Nothing to remove."], success=False)
         if dry_run:
             return WorkflowResult(dry_run=True, planned=planned, errors=errors)
-        decision = await gate(ctx, config, modules, "Homelab (teardown_service) will:\n- " + "\n- ".join(planned))
+        decision = await gate(ctx, config, modules, "Homelab (teardown_service) will:\n- " + "\n- ".join(planned),
+                              tool="teardown_service")
         if not decision.approved:
             return WorkflowResult(planned=planned, errors=errors, note=decision.note)
         steps: list[str] = []

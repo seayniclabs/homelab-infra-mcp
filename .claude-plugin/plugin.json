@@ -1,0 +1,10 @@
+{
+  "name": "homelab",
+  "version": "2.1.0",
+  "description": "Nginx Proxy Manager, Docker and Cloudflare DNS in your AI assistant, with approval for every change, plus skills for setup, exposing services, troubleshooting and health checks. By Seaynic Labs.",
+  "author": { "name": "Seaynic Labs", "url": "https://seayniclabs.com" },
+  "homepage": "https://github.com/seayniclabs/homelab-infra-mcp",
+  "repository": "https://github.com/seayniclabs/homelab-infra-mcp",
+  "license": "MIT",
+  "keywords": ["mcp", "homelab", "nginx-proxy-manager", "docker", "cloudflare", "dns", "skills"]
+}
