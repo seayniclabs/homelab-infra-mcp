@@ -140,13 +140,24 @@ def register(mcp: FastMCP, runtime: Runtime, enabled: set[str]) -> None:
         host_id = proxy_host_id
         if "proxy" in enabled:
             npm = runtime.npm()
-            if not host_id:
+            host_names = ""
+            if proxy_host_id:
+                raw = await npm.request("GET", f"nginx/proxy-hosts/{proxy_host_id}")
+                names = list(raw.get("domain_names") or [])
+                if domain not in names:
+                    raise HomelabError(
+                        "proxy", "host_mismatch",
+                        f"proxy host {proxy_host_id} serves {', '.join(names) or 'no domains'}, not {domain}.",
+                        "pass the id of the host for this domain, or leave proxy_host_id at 0 to find it by name.")
+                host_names = ", ".join(names)
+            else:
                 for h in await npm.request("GET", "nginx/proxy-hosts"):
                     if domain in h.get("domain_names", []):
                         host_id = h["id"]
+                        host_names = ", ".join(h.get("domain_names") or [])
                         break
             if host_id:
-                planned.append(f"DELETE proxy host {host_id} ({domain})")
+                planned.append(f"DELETE proxy host {host_id} ({host_names})")
                 modules.append("proxy")
             else:
                 errors.append(f"No proxy host found for {domain}")

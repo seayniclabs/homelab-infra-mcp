@@ -193,7 +193,8 @@ class DockerModule(Module):
                 return ImagesResult(change=change)
             if not image.strip():
                 raise HomelabError(MODULE, "bad_input", f"image is required for {action}.", "pass an image name.")
-            name = image.strip()
+            name = validation.image_ref(image, MODULE)
+            tag = validation.tag(tag, MODULE)
             if action == "pull":
                 summary = f"pull image {name}:{tag}"
 

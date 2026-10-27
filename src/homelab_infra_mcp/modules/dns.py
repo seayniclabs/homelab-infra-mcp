@@ -67,6 +67,7 @@ class CloudflareClient:
         return data.get("result", []), data.get("result_info", {})
 
     async def records(self, zone: str, record_type: str, page: int, per_page: int) -> tuple[list[dict], dict]:
+        zone = validation.cf_id(zone, MODULE, "zone_id")
         params: dict[str, Any] = {"page": page, "per_page": per_page}
         if record_type:
             params["type"] = record_type
@@ -74,18 +75,23 @@ class CloudflareClient:
         return data.get("result", []), data.get("result_info", {})
 
     async def record(self, zone: str, record_id: str) -> dict[str, Any]:
+        zone, record_id = validation.cf_id(zone, MODULE, "zone_id"), validation.cf_id(record_id, MODULE, "record_id")
         return (await self._json("GET", f"zones/{zone}/dns_records/{record_id}")).get("result", {})
 
     async def create(self, zone: str, body: dict) -> dict[str, Any]:
+        zone = validation.cf_id(zone, MODULE, "zone_id")
         return (await self._json("POST", f"zones/{zone}/dns_records", json=body)).get("result", {})
 
     async def update(self, zone: str, record_id: str, body: dict) -> dict[str, Any]:
+        zone, record_id = validation.cf_id(zone, MODULE, "zone_id"), validation.cf_id(record_id, MODULE, "record_id")
         return (await self._json("PUT", f"zones/{zone}/dns_records/{record_id}", json=body)).get("result", {})
 
     async def delete(self, zone: str, record_id: str) -> None:
+        zone, record_id = validation.cf_id(zone, MODULE, "zone_id"), validation.cf_id(record_id, MODULE, "record_id")
         await self._json("DELETE", f"zones/{zone}/dns_records/{record_id}")
 
     async def export(self, zone: str) -> str:
+        zone = validation.cf_id(zone, MODULE, "zone_id")
         r = await self._send("GET", f"zones/{zone}/dns_records/export")
         self._check(r)
         return r.text

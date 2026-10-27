@@ -12,3 +12,6 @@ venv/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+
+# mcp-publisher writes login tokens into the working directory
+.mcpregistry_*

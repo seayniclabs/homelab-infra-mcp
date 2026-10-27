@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any, Callable
+from urllib.parse import quote
 
 import docker as docker_sdk
 import httpx
@@ -18,6 +19,11 @@ from homelab_infra_mcp.errors import HomelabError
 from homelab_infra_mcp.runtime import HttpFactory
 
 MODULE = "docker"
+
+
+def _seg(value: Any) -> str:
+    """One path segment, percent-encoded so no id or image name can change the URL path."""
+    return quote(str(value), safe="")
 DEFAULT_HOST = "unix:///var/run/docker.sock"
 
 
@@ -229,17 +235,17 @@ class PortainerBackend:
 
     async def get_container(self, ref: str) -> dict[str, Any]:
         cid = await self._resolve(ref)
-        c = await self._request("GET", self._docker_path(f"/containers/{cid}/json"))
+        c = await self._request("GET", self._docker_path(f"/containers/{_seg(cid)}/json"))
         return {"id": c["Id"][:12], "name": c["Name"].lstrip("/"), "status": c["State"]["Status"],
                 "image": c["Config"]["Image"], "ports": [], "attrs": c}
 
     async def action(self, ref: str, verb: str, timeout: int = 10) -> dict[str, Any]:
         cid = await self._resolve(ref)
         if verb == "remove":
-            await self._request("DELETE", self._docker_path(f"/containers/{cid}"))
+            await self._request("DELETE", self._docker_path(f"/containers/{_seg(cid)}"))
         else:
             params = {"t": timeout} if verb in ("stop", "restart") else None
-            await self._request("POST", self._docker_path(f"/containers/{cid}/{verb}"), params=params)
+            await self._request("POST", self._docker_path(f"/containers/{_seg(cid)}/{verb}"), params=params)
         return {"name": ref.lstrip("/"), "id": cid[:12]}
 
     async def logs(self, ref: str, tail: int, since: str) -> dict[str, Any]:
@@ -249,7 +255,7 @@ class PortainerBackend:
             params["since"] = since
         try:
             async with self.http() as client:
-                r = await client.get(self._docker_path(f"/containers/{cid}/logs"), params=params,
+                r = await client.get(self._docker_path(f"/containers/{_seg(cid)}/logs"), params=params,
                                      headers={"X-API-Key": self.token})
         except httpx.HTTPError as e:
             raise HomelabError(MODULE, "unreachable", f"could not reach Portainer ({type(e).__name__}).")
@@ -258,7 +264,7 @@ class PortainerBackend:
 
     async def stats(self, ref: str) -> dict[str, Any]:
         cid = await self._resolve(ref)
-        raw = await self._request("GET", self._docker_path(f"/containers/{cid}/stats"), params={"stream": "false"})
+        raw = await self._request("GET", self._docker_path(f"/containers/{_seg(cid)}/stats"), params={"stream": "false"})
         return {"name": ref, **stats_from_raw(raw)}
 
     async def list_images(self) -> list[dict[str, Any]]:
@@ -272,7 +278,7 @@ class PortainerBackend:
         return {"image": ref}
 
     async def remove_image(self, image: str, force: bool) -> dict[str, Any]:
-        await self._request("DELETE", self._docker_path(f"/images/{image}"), params={"force": 1 if force else 0})
+        await self._request("DELETE", self._docker_path(f"/images/{_seg(image)}"), params={"force": 1 if force else 0})
         return {"image": image}
 
     async def list_volumes(self) -> list[dict[str, Any]]:
@@ -297,8 +303,8 @@ class PortainerBackend:
                  "type": str(s.get("Type"))} for s in raw]
 
     async def get_stack(self, stack_id: int) -> dict[str, Any]:
-        stack = await self._request("GET", f"{self.base}/api/stacks/{stack_id}")
-        file = await self._request("GET", f"{self.base}/api/stacks/{stack_id}/file")
+        stack = await self._request("GET", f"{self.base}/api/stacks/{_seg(stack_id)}")
+        file = await self._request("GET", f"{self.base}/api/stacks/{_seg(stack_id)}/file")
         return {"stack": stack, "compose_file": file.get("StackFileContent")}
 
 

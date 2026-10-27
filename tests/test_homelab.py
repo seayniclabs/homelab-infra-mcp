@@ -22,7 +22,7 @@ from homelab_infra_mcp.config import Config
 from homelab_infra_mcp.server import build_server
 
 PROXY = {"HOMELAB_PROXY_EMAIL": "admin@example.test", "HOMELAB_PROXY_PASSWORD": "pw-test"}
-DNS = {"HOMELAB_DNS_API_TOKEN": "cf-test-token", "HOMELAB_DNS_ZONE_ID": "zone1"}
+DNS = {"HOMELAB_DNS_API_TOKEN": "cf-test-token", "HOMELAB_DNS_ZONE_ID": "0123456789abcdef0123456789abcdef"}
 HA = {"HOMELAB_HOME_ASSISTANT_URL": "http://ha.test:8123", "HOMELAB_HOME_ASSISTANT_TOKEN": "ha-test"}
 
 CORE_AND_MODULE_TOOLS = {
@@ -519,7 +519,7 @@ def test_portainer_backend_lists_containers_over_mocked_http():
 # --- dns (Cloudflare), mocked -------------------------------------------------
 
 def cf_handler(seen, writes_ok=True):
-    records = [{"id": "r1", "type": "A", "name": "app.example.test", "content": "192.0.2.1",
+    records = [{"id": "fedcba9876543210fedcba9876543210", "type": "A", "name": "app.example.test", "content": "192.0.2.1",
                 "proxied": False, "ttl": 1}]
 
     def handle(req):
@@ -530,21 +530,21 @@ def cf_handler(seen, writes_ok=True):
         if p.endswith("/user/tokens/verify"):
             return httpx.Response(200, json={"result": {"status": "active"}})
         if p == "/client/v4/zones":
-            return httpx.Response(200, json={"result": [{"id": "zone1", "name": "example.test", "status": "active",
+            return httpx.Response(200, json={"result": [{"id": "0123456789abcdef0123456789abcdef", "name": "example.test", "status": "active",
                                                          "name_servers": ["ns.test"]}],
                                              "result_info": {"total_pages": 1}})
-        if p == "/client/v4/zones/zone1/dns_records/export":
+        if p == "/client/v4/zones/0123456789abcdef0123456789abcdef/dns_records/export":
             return httpx.Response(200, text="$ORIGIN example.test.\n")
-        if p == "/client/v4/zones/zone1/dns_records" and req.method == "GET":
+        if p == "/client/v4/zones/0123456789abcdef0123456789abcdef/dns_records" and req.method == "GET":
             return httpx.Response(200, json={"result": records, "result_info": {"total_pages": 1}})
-        if p == "/client/v4/zones/zone1/dns_records" and req.method == "POST":
+        if p == "/client/v4/zones/0123456789abcdef0123456789abcdef/dns_records" and req.method == "POST":
             return httpx.Response(200, json={"result": {"id": "r2"}})
-        if p == "/client/v4/zones/zone1/dns_records/r1" and req.method == "GET":
+        if p == "/client/v4/zones/0123456789abcdef0123456789abcdef/dns_records/fedcba9876543210fedcba9876543210" and req.method == "GET":
             return httpx.Response(200, json={"result": records[0]})
-        if p == "/client/v4/zones/zone1/dns_records/r1" and req.method == "PUT":
-            return httpx.Response(200, json={"result": {"id": "r1"}})
-        if p == "/client/v4/zones/zone1/dns_records/r1" and req.method == "DELETE":
-            return httpx.Response(200, json={"result": {"id": "r1"}})
+        if p == "/client/v4/zones/0123456789abcdef0123456789abcdef/dns_records/fedcba9876543210fedcba9876543210" and req.method == "PUT":
+            return httpx.Response(200, json={"result": {"id": "fedcba9876543210fedcba9876543210"}})
+        if p == "/client/v4/zones/0123456789abcdef0123456789abcdef/dns_records/fedcba9876543210fedcba9876543210" and req.method == "DELETE":
+            return httpx.Response(200, json={"result": {"id": "fedcba9876543210fedcba9876543210"}})
         return httpx.Response(404, json={"errors": [{"message": "no such record"}]})
     return handle
 
@@ -560,9 +560,9 @@ def test_dns_zones_list_and_export():
 def test_dns_records_list_filters_and_get():
     seen = []
     out = call(server(DNS, cf_handler(seen)), "dns_records", action="list", record_type="a")
-    assert out["items"][0] == {"id": "r1", "type": "A", "name": "app.example.test", "content": "192.0.2.1",
+    assert out["items"][0] == {"id": "fedcba9876543210fedcba9876543210", "type": "A", "name": "app.example.test", "content": "192.0.2.1",
                                "proxied": False, "ttl": 1}
-    got = call(server(DNS, cf_handler(seen)), "dns_records", action="get", record_id="r1")
+    got = call(server(DNS, cf_handler(seen)), "dns_records", action="get", record_id="fedcba9876543210fedcba9876543210")
     assert got["detail"]["content"] == "192.0.2.1"
 
 
@@ -570,7 +570,7 @@ def test_dns_create_dry_run_then_pre_approved():
     seen = []
     dry = call(server(DNS, cf_handler(seen)), "dns_records", action="create", name="x.example.test",
                record_type="CNAME", content="t.example.net", dry_run=True)
-    assert dry["change"]["dry_run"] is True and ("POST", "/client/v4/zones/zone1/dns_records") not in seen
+    assert dry["change"]["dry_run"] is True and ("POST", "/client/v4/zones/0123456789abcdef0123456789abcdef/dns_records") not in seen
     env = {**DNS, "HOMELAB_DNS_ALLOW_WRITES": "true"}
     out = call(server(env, cf_handler(seen)), "dns_records", action="create", name="x.example.test",
                record_type="CNAME", content="t.example.net")
@@ -580,10 +580,10 @@ def test_dns_create_dry_run_then_pre_approved():
 def test_dns_update_and_delete_pre_approved():
     seen = []
     env = {**DNS, "HOMELAB_DNS_ALLOW_WRITES": "true"}
-    call(server(env, cf_handler(seen)), "dns_records", action="update", record_id="r1", content="192.0.2.9")
-    assert ("PUT", "/client/v4/zones/zone1/dns_records/r1") in seen
-    call(server(env, cf_handler(seen)), "dns_records", action="delete", record_id="r1")
-    assert ("DELETE", "/client/v4/zones/zone1/dns_records/r1") in seen
+    call(server(env, cf_handler(seen)), "dns_records", action="update", record_id="fedcba9876543210fedcba9876543210", content="192.0.2.9")
+    assert ("PUT", "/client/v4/zones/0123456789abcdef0123456789abcdef/dns_records/fedcba9876543210fedcba9876543210") in seen
+    call(server(env, cf_handler(seen)), "dns_records", action="delete", record_id="fedcba9876543210fedcba9876543210")
+    assert ("DELETE", "/client/v4/zones/0123456789abcdef0123456789abcdef/dns_records/fedcba9876543210fedcba9876543210") in seen
 
 
 def test_dns_bad_token_is_reported():
@@ -695,7 +695,7 @@ def test_expose_service_pre_approved_runs_dns_and_proxy():
                container_name="web", domain="web.example.test", forward_port=8080,
                tunnel_hostname="tunnel.example.net")
     assert out["success"] is True and out["approved_by"] == "settings"
-    assert ("POST", "/client/v4/zones/zone1/dns_records") in seen or any("dns_records" in p for _, p in seen)
+    assert ("POST", "/client/v4/zones/0123456789abcdef0123456789abcdef/dns_records") in seen or any("dns_records" in p for _, p in seen)
     assert ("POST", "/api/nginx/proxy-hosts") in seen
 
 
@@ -715,15 +715,15 @@ def test_service_status_and_overview():
             return httpx.Response(200, json={"token": "tok"})
         if req.url.path == "/api/nginx/proxy-hosts":
             return httpx.Response(200, json=[{"id": 1, "domain_names": ["web.example.test"]}])
-        if req.url.path == "/client/v4/zones/zone1/dns_records":
-            return httpx.Response(200, json={"result": [{"id": "r1", "type": "A", "name": "web.example.test",
+        if req.url.path == "/client/v4/zones/0123456789abcdef0123456789abcdef/dns_records":
+            return httpx.Response(200, json={"result": [{"id": "fedcba9876543210fedcba9876543210", "type": "A", "name": "web.example.test",
                                                          "content": "192.0.2.1"}], "result_info": {"total_pages": 1}})
         return httpx.Response(500)
 
     status = call(server(env, handle, docker=lambda h: FakeDocker()), "service_status",
                   container_name="web", domain="web.example.test")
     assert status["container"]["name"] == "web"
-    assert status["proxy_hosts"][0]["id"] == 1 and status["dns_records"][0]["id"] == "r1"
+    assert status["proxy_hosts"][0]["id"] == 1 and status["dns_records"][0]["id"] == "fedcba9876543210fedcba9876543210"
     overview = call(server(env, handle, docker=lambda h: FakeDocker()), "infrastructure_overview")
     assert overview["proxy"]["proxy_hosts"] == 1 and overview["dns"]["by_type"] == {"A": 1}
 
@@ -742,3 +742,90 @@ def test_stdio_start_with_empty_env_reports_package_version(tmp_path):
     version, names = asyncio.run(go())
     assert version == "2.0.0"
     assert names == CORE_AND_MODULE_TOOLS
+
+
+# --- hardening: annotations, traversal, id checks, teardown host match ---------
+
+def test_proxy_tools_that_can_write_are_not_annotated_read_only():
+    tools_ = {t.name: t for t in asyncio.run(server(PROXY).list_tools())}
+    for name in ("proxy_hosts", "proxy_redirections", "proxy_certificates", "proxy_access_lists"):
+        assert tools_[name].annotations.readOnlyHint is False, name
+        assert tools_[name].annotations.destructiveHint is True, name
+
+
+def test_teardown_refuses_a_host_id_that_does_not_serve_the_domain():
+    seen = []
+    env = {**PROXY, "HOMELAB_PROXY_ALLOW_WRITES": "true"}
+    with pytest.raises(Exception) as err:
+        call(server(env, npm_handler(seen)), "teardown_service", domain="b.example.test", proxy_host_id=1)
+    assert "host_mismatch" in str(err.value) and "a.example.test" in str(err.value)
+    assert not any(m == "DELETE" for m, _ in seen)
+
+
+def test_teardown_plan_shows_the_real_domains_of_the_host_it_deletes():
+    seen = []
+    out = call(server(PROXY, npm_handler(seen)), "teardown_service", domain="a.example.test", proxy_host_id=1,
+               dry_run=True)
+    assert out["planned"] == ["DELETE proxy host 1 (a.example.test)"]
+
+
+def test_docker_image_refs_with_path_or_query_characters_are_refused():
+    for bad in ("nginx/../../secret", "nginx?x=1", "nginx#frag", "ng%2Fx", "a..b"):
+        with pytest.raises(Exception) as err:
+            call(server({}, docker=lambda h: FakeDocker()), "docker_images", action="pull", image=bad)
+        assert "bad_input" in str(err.value), bad
+
+
+def test_docker_container_name_with_dotdot_is_refused():
+    with pytest.raises(Exception) as err:
+        call(server({}, docker=lambda h: FakeDocker()), "docker_containers", action="get", container="a..b")
+    assert "bad_input" in str(err.value)
+
+
+def test_portainer_image_path_segments_are_percent_encoded():
+    env = {"HOMELAB_DOCKER_PORTAINER_URL": "https://portainer.test", "HOMELAB_DOCKER_PORTAINER_TOKEN": "pt",
+           "HOMELAB_DOCKER_ALLOW_WRITES": "true"}
+    paths = []
+
+    def handle(req):
+        paths.append(req.url.raw_path.decode())
+        return httpx.Response(200, json={})
+
+    call(server(env, handle), "docker_images", action="remove", image="library/nginx")
+    assert any("/images/library%2Fnginx" in p for p in paths), paths
+
+
+def test_dns_rejects_non_hex_zone_and_record_ids_before_any_request():
+    seen = []
+    with pytest.raises(Exception) as err:
+        call(server(DNS, cf_handler(seen)), "dns_records", action="get", record_id="../../zones")
+    assert "bad_input" in str(err.value)
+    with pytest.raises(Exception) as err:
+        call(server({**DNS, "HOMELAB_DNS_ZONE_ID": "zone1"}, cf_handler(seen)), "dns_zones", action="export")
+    assert "bad_input" in str(err.value)
+    assert seen == []
+
+
+def test_ha_call_service_refuses_path_tricks_in_domain_and_service():
+    seen = []
+    with pytest.raises(Exception) as err:
+        call(server(HA_ENV, ha_handler(seen)), "ha_entities", action="call_service",
+             domain="../config", service="reload")
+    assert "bad_input" in str(err.value)
+    with pytest.raises(Exception) as err:
+        call(server(HA_ENV, ha_handler(seen)), "ha_entities", action="call_service",
+             domain="light", service="turn_on/../../x")
+    assert "bad_input" in str(err.value)
+    assert seen == []
+
+
+def test_ha_entity_id_must_be_domain_dot_object():
+    seen = []
+    env = {**HA_ENV, "HOMELAB_HOME_ASSISTANT_ALLOW_WRITES": "true"}
+    with pytest.raises(Exception) as err:
+        call(server(env, ha_handler(seen)), "ha_entities", action="turn_on", entity_id="light/../x")
+    assert "bad_input" in str(err.value)
+    with pytest.raises(Exception) as err:
+        call(server(env, ha_handler(seen)), "ha_automations", action="trigger", entity_id="automation.../x")
+    assert "bad_input" in str(err.value)
+    assert seen == []

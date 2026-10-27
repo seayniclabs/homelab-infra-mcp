@@ -185,7 +185,7 @@ class ProxyModule(Module):
     def register(self, mcp: FastMCP, runtime: Runtime) -> None:
         config = runtime.config
 
-        @mcp.tool(annotations=READ_ONLY)
+        @mcp.tool(annotations=WRITES)
         async def proxy_hosts(
             ctx: Context,
             action: Literal["list", "get", "create", "update", "delete"] = "list",
@@ -260,7 +260,7 @@ class ProxyModule(Module):
                                       perform=perform, dry_run=dry_run, preview={"id": host_id, "domains": domains_now})
             return ProxyHostsResult(change=change)
 
-        @mcp.tool(annotations=READ_ONLY)
+        @mcp.tool(annotations=WRITES)
         async def proxy_redirections(
             ctx: Context,
             action: Literal["list", "create", "delete"] = "list",
@@ -313,7 +313,7 @@ class ProxyModule(Module):
                                       perform=perform, dry_run=dry_run, preview={"id": redirection_id})
             return RedirectionsResult(change=change)
 
-        @mcp.tool(annotations=READ_ONLY)
+        @mcp.tool(annotations=WRITES)
         async def proxy_certificates(
             ctx: Context,
             action: Literal["list", "request"] = "list",
@@ -344,7 +344,7 @@ class ProxyModule(Module):
                                       perform=perform, dry_run=dry_run, preview=body)
             return CertificatesResult(change=change)
 
-        @mcp.tool(annotations=READ_ONLY)
+        @mcp.tool(annotations=WRITES)
         async def proxy_access_lists(
             ctx: Context,
             action: Literal["list", "create", "delete"] = "list",

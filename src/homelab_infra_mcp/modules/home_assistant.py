@@ -16,6 +16,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel
 
 from homelab_infra_mcp.config import Config
+from homelab_infra_mcp import validation
 from homelab_infra_mcp.errors import HomelabError
 from homelab_infra_mcp.models import Change, page, run_change
 from homelab_infra_mcp.modules import ALLOW_WRITES, Module, Setting
@@ -130,12 +131,14 @@ class HomeAssistantModule(Module):
                 if action == "get":
                     if not entity_id:
                         raise HomelabError(MODULE, "bad_input", "entity_id is required for get.", "pass e.g. light.kitchen.")
+                    validation.ha_entity(entity_id, MODULE)
                     raw = next((s for s in states if s.get("entity_id") == entity_id), None)
                     if raw is None:
                         raise HomelabError(MODULE, "not_found", f"no entity {entity_id}.", "use action=search to find it.")
                     return EntitiesResult(items=[_entity(raw)], detail=raw, total=1)
                 rows = states
                 if domain:
+                    validation.ha_name(domain, MODULE, "domain")
                     rows = [s for s in rows if s.get("entity_id", "").startswith(f"{domain}.")]
                 if action == "search":
                     q = query.lower()
@@ -149,12 +152,15 @@ class HomeAssistantModule(Module):
                 if not (domain and service):
                     raise HomelabError(MODULE, "bad_input", "call_service needs domain and service.",
                                        "for example domain=light service=turn_on entity_id=light.kitchen.")
-                svc_domain, svc = domain, service
+                svc_domain = validation.ha_name(domain, MODULE, "domain")
+                svc = validation.ha_name(service, MODULE, "service")
             else:
                 if not entity_id:
                     raise HomelabError(MODULE, "bad_input", f"{action} needs entity_id.", "pass e.g. switch.fan.")
+                validation.ha_entity(entity_id, MODULE)
                 svc_domain, svc = _domain_of(entity_id), action
             if entity_id:
+                validation.ha_entity(entity_id, MODULE)
                 data["entity_id"] = entity_id
             summary = f"call Home Assistant service {svc_domain}.{svc}" + (f" on {entity_id}" if entity_id else "") \
                 + (f" with {data}" if len(data) > (1 if entity_id else 0) else "")
@@ -203,6 +209,7 @@ class HomeAssistantModule(Module):
                     cfg["condition"] = conditions
                 return AutomationsResult(yaml=yaml.safe_dump([cfg], sort_keys=False))
             if action == "trigger":
+                validation.ha_entity(entity_id, MODULE)
                 if not entity_id.startswith(prefix):
                     raise HomelabError(MODULE, "bad_input", f"entity_id must start with {prefix!r}.",
                                        f"for example {prefix}morning.")
