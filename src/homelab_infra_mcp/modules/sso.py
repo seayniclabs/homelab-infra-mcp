@@ -135,10 +135,14 @@ class SsoModule(Module):
                 raise HomelabError(MODULE, "bad_input", "create needs host.", "for example host=app.example.com.")
             h = validation.domain(host, MODULE)
             label = name.strip() or h
+            # One plain line: a name with line breaks could fake lines in the approval prompt.
+            if len(label) > 80 or any(ord(c) < 32 or ord(c) == 127 for c in label):
+                raise HomelabError(MODULE, "bad_input", "name must be one line of at most 80 characters.",
+                                   "give the application a short plain name, or leave it out to use the host.")
             slug = _slug(h)
             flow_slug = config.get(MODULE, "flow_slug") or DEFAULT_FLOW
-            summary = (f"create Authentik proxy provider '{label}' ({mode}) for https://{h} and application "
-                       f"'{label}' (slug {slug}, authorization flow {flow_slug})")
+            summary = (f"create Authentik proxy provider {label!r} ({mode}) for https://{h} and application "
+                       f"{label!r} (slug {slug}, authorization flow {flow_slug!r})")
 
             async def perform():
                 flows = await sso.request("GET", "/flows/instances/", params={"slug": flow_slug})

@@ -32,7 +32,9 @@ MODULE = "tunnel"
 CF_API = "https://api.cloudflare.com/client/v4"
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 CHANGES = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True)
-_SERVICE_RE = re.compile(r"^(https?://[A-Za-z0-9.\-]+(:\d{1,5})?|http_status:\d{3}|unix:[^\s]+)$")
+# Network origins only. No unix: sockets: a public hostname must never be routed to a local
+# control socket such as /var/run/docker.sock.
+_SERVICE_RE = re.compile(r"^(https?://[A-Za-z0-9.\-]+(:\d{1,5})?|http_status:\d{3})$")
 
 
 class TunnelClient:

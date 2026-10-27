@@ -33,6 +33,8 @@ Homelab follows [semantic versioning](https://semver.org). Modules added after 2
 
 - `server.json` describes version 2.1.0 and lists the settings for the new modules. Tokens, passwords and API keys are marked `isSecret`.
 - `SECURITY.md` covers the new modules' secrets, the local approval log, and the read-only behavior of `diagnose_service`.
+- Security: tunnel routes accept network origins only (`http(s)://host:port`, `http_status:NNN`). `unix:` socket targets are refused, so a public hostname can't be routed to a local control socket such as the Docker socket.
+- Security: Authentik application names must be one line of at most 80 characters, and the approval prompt quotes them, so a name can't fake lines in the prompt.
 
 ## 2.0.0 — unreleased
 

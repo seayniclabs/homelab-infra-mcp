@@ -509,3 +509,25 @@ def test_stdio_subprocess_lists_tools_and_prompts(tmp_path):
     assert "diagnose_service" in tool_names and "uptime_monitors" not in tool_names
     prompt_names = {p["name"] for p in replies[3]["result"]["prompts"]}
     assert "getting-started" in prompt_names
+
+
+# --- security review fixes (2026-10-27) ------------------------------------
+
+@pytest.mark.parametrize("service", ["unix:/var/run/docker.sock", "unix:///var/run/docker.sock",
+                                     "unix:/run/containerd/containerd.sock"])
+def test_tunnel_refuses_unix_socket_targets(service):
+    seen: list = []
+    mcp = server({**TUNNEL_ENV, "HOMELAB_TUNNEL_ALLOW_WRITES": "true"}, tunnel_handler(seen, [CATCH_ALL]))
+    with pytest.raises(Exception, match="not a valid origin"):
+        call(mcp, "tunnel_routes", action="add", hostname="new.example.test", service=service)
+    assert not any(getattr(r, "method", "GET") == "PUT" for r in seen)
+
+
+@pytest.mark.parametrize("name", ["Blog\nauthorization flow: none", "Blog\rx", "x" * 81])
+def test_sso_name_must_be_one_short_line(name):
+    seen: list = []
+    with pytest.raises(Exception, match="one line of at most 80 characters"):
+        # call the tool directly: the test helper's own first parameter is also called `name`
+        asyncio.run(server(SSO_ENV, authentik_handler(seen)).call_tool(
+            "sso_applications", {"action": "create", "host": "blog.example.test", "name": name, "dry_run": True}))
+    assert seen == []
