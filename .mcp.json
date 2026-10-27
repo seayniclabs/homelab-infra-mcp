@@ -3,7 +3,7 @@
     "homelab": {
       "command": "uvx",
       "args": [
-        "homelab-infra-mcp==2.1.0"
+        "homelab-infra-mcp==2.1.1"
       ]
     }
   }

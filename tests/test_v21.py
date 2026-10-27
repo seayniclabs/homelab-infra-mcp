@@ -504,7 +504,7 @@ def test_stdio_subprocess_lists_tools_and_prompts(tmp_path):
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
             {"jsonrpc": "2.0", "id": 3, "method": "prompts/list", "params": {}}]
     replies = _exchange(proc, msgs)
-    assert replies[1]["result"]["serverInfo"]["version"] == "2.1.0"
+    assert replies[1]["result"]["serverInfo"]["version"] == "2.1.1"
     tool_names = {t["name"] for t in replies[2]["result"]["tools"]}
     assert "diagnose_service" in tool_names and "uptime_monitors" not in tool_names
     prompt_names = {p["name"] for p in replies[3]["result"]["prompts"]}
@@ -531,3 +531,65 @@ def test_sso_name_must_be_one_short_line(name):
         asyncio.run(server(SSO_ENV, authentik_handler(seen)).call_tool(
             "sso_applications", {"action": "create", "host": "blog.example.test", "name": name, "dry_run": True}))
     assert seen == []
+
+
+class NoContainers:
+    """Docker client double with an empty container list."""
+    containers = type("C", (), {"list": staticmethod(lambda all=False: [])})()
+
+
+def _docker_host_env(**extra):
+    return {**ALL_ON, "HOMELAB_TUNNEL_ENABLED": "false", "HOMELAB_DNS_FILTER_ENABLED": "false",
+            "HOMELAB_SSO_ENABLED": "false", "HOMELAB_UPTIME_ENABLED": "false", **extra}
+
+
+def _docker_host_proxy(port):
+    return npm_hosts_handler([{"id": 7, "domain_names": ["stats.example.test"], "enabled": True,
+                               "forward_host": "host.docker.internal", "forward_port": port}])
+
+
+def _free_port():
+    import socket as s
+    with s.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def test_diagnose_docker_host_upstream_with_nothing_listening_fails(monkeypatch):
+    # 2.1.0 reported this as two "unknown" hops and "No failing hop found".
+    monkeypatch.setattr(diagnose.socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("203.0.113.9", 443))])
+    port = _free_port()
+    out = call(server(_docker_host_env(), _docker_host_proxy(port), docker=lambda host: NoContainers()),
+               "diagnose_service", domain="stats.example.test")
+    hops = {h["hop"]: h for h in out["hops"]}
+    assert hops["container"]["status"] == "skipped"
+    assert hops["upstream_port"]["status"] == "fail" and f"127.0.0.1:{port}" in hops["upstream_port"]["detail"]
+    assert out["first_failure"] == "upstream_port"
+
+
+def test_diagnose_docker_host_upstream_listening_is_ok(monkeypatch):
+    import socket as s
+    monkeypatch.setattr(diagnose.socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("203.0.113.9", 443))])
+    with s.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        out = call(server(_docker_host_env(), _docker_host_proxy(port), docker=lambda host: NoContainers()),
+                   "diagnose_service", domain="stats.example.test")
+    hops = {h["hop"]: h for h in out["hops"]}
+    assert hops["upstream_port"]["status"] == "ok"
+    assert out["first_failure"] is None
+
+
+def test_diagnose_unchecked_hops_are_not_an_all_clear(monkeypatch):
+    def resolve(host, *a, **k):
+        if host == "host.docker.internal":
+            raise OSError("nodename nor servname provided")
+        return [(2, 1, 6, "", ("203.0.113.9", 443))]
+    monkeypatch.setattr(diagnose.socket, "getaddrinfo", resolve)
+    out = call(server(_docker_host_env(HOMELAB_DOCKER_ENABLED="false"), _docker_host_proxy(3010)),
+               "diagnose_service", domain="stats.example.test")
+    hops = {h["hop"]: h for h in out["hops"]}
+    assert hops["upstream_port"]["status"] == "unknown"
+    assert out["first_failure"] is None
+    assert "not an all-clear" in out["note"] and "upstream_port" in out["note"]

@@ -28,13 +28,13 @@ Homelab works with any MCP client: Claude Desktop, Claude Code, Cursor, VS Code,
 Homelab needs Python 3.11 or newer. With [uv](https://docs.astral.sh/uv/) there is nothing to install ahead of time. Pin the version so updates arrive only when you choose them:
 
 ```bash
-uvx homelab-infra-mcp==2.1.0 --version
+uvx homelab-infra-mcp==2.1.1 --version
 ```
 
 Or with pip:
 
 ```bash
-pip install homelab-infra-mcp==2.1.0
+pip install homelab-infra-mcp==2.1.1
 ```
 
 Upgrading from 2.0? Version 2.1 has no breaking changes. The four new modules are off by default. Read the 2.1.0 section of [CHANGELOG.md](CHANGELOG.md).
@@ -110,7 +110,7 @@ Most clients use the same JSON shape. Pin the version so the server runs the rel
   "mcpServers": {
     "homelab": {
       "command": "uvx",
-      "args": ["homelab-infra-mcp==2.1.0"],
+      "args": ["homelab-infra-mcp==2.1.1"],
       "env": {
         "HOMELAB_PROXY_EMAIL": "admin@example.com",
         "HOMELAB_PROXY_PASSWORD": "change-me",
@@ -125,12 +125,12 @@ Most clients use the same JSON shape. Pin the version so the server runs the rel
 | Client | Where the config goes |
 |---|---|
 | Claude Desktop | `claude_desktop_config.json` (Settings → Developer → Edit Config) |
-| Claude Code | `claude mcp add homelab -- uvx homelab-infra-mcp==2.1.0`, then add the `env` values, or a project `.mcp.json` |
+| Claude Code | `claude mcp add homelab -- uvx homelab-infra-mcp==2.1.1`, then add the `env` values, or a project `.mcp.json` |
 | Cursor | `~/.cursor/mcp.json`, or `.cursor/mcp.json` in a project |
 | VS Code | `.vscode/mcp.json`, using `"servers"` instead of `"mcpServers"` |
-| Sonique, Hermes, OpenClaw, others | Any client that launches a stdio MCP server: command `uvx`, args `["homelab-infra-mcp==2.1.0"]`, plus the env values |
+| Sonique, Hermes, OpenClaw, others | Any client that launches a stdio MCP server: command `uvx`, args `["homelab-infra-mcp==2.1.1"]`, plus the env values |
 
-**As a Claude Code plugin.** The plugin installs the server and the skills together. Its `.mcp.json` pins `homelab-infra-mcp==2.1.0`. Set the variables in your environment or in the config file.
+**As a Claude Code plugin.** The plugin installs the server and the skills together. Its `.mcp.json` pins `homelab-infra-mcp==2.1.1`. Set the variables in your environment or in the config file.
 
 **Over HTTP.** For clients that connect to a URL instead of launching a process:
 

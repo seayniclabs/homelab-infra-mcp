@@ -2,6 +2,15 @@
 
 Homelab follows [semantic versioning](https://semver.org). Modules added after 2.0 ship switched off.
 
+## 2.1.1 — 2026-10-27
+
+**No breaking changes.** Change the pin to `homelab-infra-mcp==2.1.1`.
+
+### Fixed
+
+- `diagnose_service` no longer reports an all-clear for a proxy host that forwards to `host.docker.internal` with nothing listening. When Homelab talks to Docker through the local socket, this machine is the Docker host, so the `upstream_port` hop checks `127.0.0.1:<port>` and fails when the connection is refused. The `container` hop reports such an upstream as `skipped` (a process on the Docker host, not a container) instead of `unknown`.
+- When no hop fails but one or more hops could not be checked, the note now names those hops and says the result is not an all-clear. Before, it said "No failing hop found".
+
 ## 2.1.0 — 2026-10-27
 
 **No breaking changes.** Every 2.0 tool name, action, argument and environment variable works as before. Upgrade by changing the pin to `homelab-infra-mcp==2.1.0`. No config edits are needed.

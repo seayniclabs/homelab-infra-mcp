@@ -30,6 +30,10 @@ from homelab_infra_mcp.runtime import Runtime
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
 CERT_WARN_DAYS = 14
 
+# Names a container uses to reach the machine Docker runs on. They resolve inside containers only.
+DOCKER_HOST_ALIASES = {"host.docker.internal", "gateway.docker.internal",
+                       "docker.for.mac.host.internal", "docker.for.mac.localhost"}
+
 HOPS = ["dns", "tunnel", "proxy", "certificate", "container", "upstream_port", "uptime", "sso"]
 
 
@@ -91,6 +95,15 @@ async def _tcp_open(host: str, port: int, timeout: float = 3.0) -> tuple[bool, s
         return True, "accepted a TCP connection"
     except (OSError, asyncio.TimeoutError) as e:
         return False, f"{type(e).__name__}: {e or 'timed out'}"
+
+
+def _docker_is_local(runtime: Runtime) -> bool:
+    """True when the Docker module talks to a local socket, so this machine is the Docker host."""
+    try:
+        backend = runtime.docker()
+    except HomelabError:
+        return False
+    return getattr(backend, "name", "") == "socket" and str(getattr(backend, "host", "")).startswith("unix://")
 
 
 def register(mcp: FastMCP, runtime: Runtime, enabled: set[str]) -> None:
@@ -179,6 +192,7 @@ def register(mcp: FastMCP, runtime: Runtime, enabled: set[str]) -> None:
         # 5. Upstream container
         upstream_host = (host or {}).get("forward_host") or ""
         upstream_port = int((host or {}).get("forward_port") or 0)
+        on_docker_host = upstream_host.lower() in DOCKER_HOST_ALIASES
         if "docker" not in enabled:
             hops.append(_skip("container", "docker"))
         elif not upstream_host:
@@ -188,7 +202,12 @@ def register(mcp: FastMCP, runtime: Runtime, enabled: set[str]) -> None:
                 rows = await runtime.docker().list_containers(all=True)
                 match = next((c for c in rows if c.get("name") == upstream_host
                               or (upstream_port and _port_matches(c.get("ports", []), upstream_port))), None)
-                if match is None:
+                if match is None and on_docker_host:
+                    hops.append(Hop(hop="container", status="skipped",
+                                    detail=f"the upstream is {upstream_host}, a process on the Docker host itself, "
+                                           f"and no container publishes port {upstream_port}. The upstream_port hop checks it.",
+                                    fix="if the service should run in a container, start it and publish the port."))
+                elif match is None:
                     hops.append(_unknown("container", f"no container named {upstream_host} or publishing port "
                                                       f"{upstream_port} on this Docker host.",
                                          "if the upstream runs outside this Docker host, check it there."))
@@ -203,6 +222,16 @@ def register(mcp: FastMCP, runtime: Runtime, enabled: set[str]) -> None:
         # 6. Upstream port
         if not upstream_host or not upstream_port:
             hops.append(_unknown("upstream_port", "no upstream host and port to test."))
+        elif on_docker_host and "docker" in enabled and _docker_is_local(runtime):
+            # Homelab runs on the Docker host, so the address a container calls host.docker.internal is this machine.
+            good, msg = await _tcp_open("127.0.0.1", upstream_port)
+            where = f"{upstream_host}:{upstream_port} (checked as 127.0.0.1:{upstream_port}, this machine is the Docker host)"
+            if good:
+                hops.append(_ok("upstream_port", f"{where} {msg}."))
+            else:
+                hops.append(_fail("upstream_port", f"{where} {msg}.",
+                                  f"nothing listens on port {upstream_port} on the Docker host. Start the service, "
+                                  "or point the proxy host at the right port or container."))
         else:
             try:
                 await asyncio.to_thread(socket.getaddrinfo, upstream_host, upstream_port)
@@ -255,6 +284,10 @@ def register(mcp: FastMCP, runtime: Runtime, enabled: set[str]) -> None:
             hops.append(_skip("sso", "sso"))
 
         first = next((h for h in hops if h.status == "fail"), None)
-        if first is None:
+        unchecked = [h.hop for h in hops if h.status == "unknown"]
+        if first is None and unchecked:
+            note = (f"No hop failed, but {len(unchecked)} could not be checked ({', '.join(unchecked)}), "
+                    "so this is not an all-clear. See each hop's fix.")
+        elif first is None:
             note = "No failing hop found. If the service still misbehaves, check the application itself and its logs."
         return DiagnoseResult(domain=d, hops=hops, first_failure=first.hop if first else None, note=note)

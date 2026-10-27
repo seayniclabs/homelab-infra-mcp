@@ -1,6 +1,6 @@
 {
   "bundle": "homelab",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "entries": {
     "instructions": "f453d2c3b63199a3c9c5a9be49c12e654a775d44f44bb21fab4db71a805d141c",
     "prompt:architecture-diagram": "a4776b0357fd15e0d873d9f3d94f99e1585d94bd0f03623cf4c933a6a2a057d9",

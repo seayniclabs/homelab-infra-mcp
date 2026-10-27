@@ -114,7 +114,7 @@ def test_homelab_modules_reports_missing_settings_and_hides_values():
     assert set(mods["proxy"]["missing"]) == {"HOMELAB_PROXY_EMAIL", "HOMELAB_PROXY_PASSWORD"}
     assert mods["dns"]["configured"] is True
     assert mods["home_assistant"]["enabled"] is False
-    assert out["read_only"] is False and out["version"] == "2.1.0"
+    assert out["read_only"] is False and out["version"] == "2.1.1"
 
 
 def test_homelab_modules_detail_never_leaks_secret_values():
@@ -740,7 +740,7 @@ def test_stdio_start_with_empty_env_reports_package_version(tmp_path):
                 listed = await session.list_tools()
                 return init.serverInfo.version, {t.name for t in listed.tools}
     version, names = asyncio.run(go())
-    assert version == "2.1.0"
+    assert version == "2.1.1"
     assert names == CORE_AND_MODULE_TOOLS
 
 
