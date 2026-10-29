@@ -2,6 +2,8 @@
 
 <!-- mcp-name: io.github.seayniclabs/homelab-infra-mcp -->
 
+**Made by [Seaynic Labs](https://seayniclabs.com).** Need tools like this built around your own systems? [We do that](https://seayniclabs.com/#business).
+
 Homelab is an MCP server that lets an AI assistant manage Nginx Proxy Manager proxy hosts, Docker containers and Cloudflare DNS records from one place. It covers the path from a container to a public web address. One call, `expose_service`, checks the container, adds the DNS record and the proxy host, and shows the plan before anything changes. Four more optional modules cover Uptime Kuma, Cloudflare Tunnel, AdGuard Home and Authentik.
 
 It is a **bundle**: one server made of modules, plus skills that teach the assistant the workflows. You switch on the modules you use. New modules arrive switched off, so an update never changes what your assistant can do until you choose to.
@@ -255,11 +257,4 @@ MIT. See [LICENSE](LICENSE). Third-party skills keep their own licenses; see [CR
 
 ---
 
-## Made by Seaynic Labs
-
-| | |
-|---|---|
-| **Publisher** | [Seaynic Labs](https://seayniclabs.com) |
-| **Source** | [github.com/seayniclabs/homelab-infra-mcp](https://github.com/seayniclabs/homelab-infra-mcp) |
-| **Report a vulnerability** | GitHub private vulnerability reporting (see [SECURITY.md](SECURITY.md)) |
-| **Credits** | [CREDITS.md](CREDITS.md) |
+**Built by [Seaynic Labs](https://seayniclabs.com).** We build tools like this around a business's own systems: local-first, with a person approving every change. [See custom integrations](https://seayniclabs.com/#business).
