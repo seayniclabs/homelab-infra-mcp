@@ -5,28 +5,40 @@ Prints result codes and field names only, never the password or the token.
 Password is read from /Volumes/data/secrets/ugreen_nas_agent_password.
 """
 import base64
+import hashlib
+import http.client
 import json
 import ssl
 import sys
-import urllib.request
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
-BASE = "https://192.168.68.68:9443"
 USER = "nas-agent"
 PW = open("/Volumes/data/secrets/ugreen_nas_agent_password").read().strip()
-# PROBE ONLY: certificate checks are off here. The real module must pin the NAS
-# certificate fingerprint instead (security review 2026-11-01).
-CTX = ssl._create_unverified_context()
+HOST, PORT = "192.168.68.68", 9443
+# The NAS uses a self-signed certificate, so trust is by PIN: every connection's
+# certificate must match this SHA-256 fingerprint BEFORE any request (and so any
+# credential) is sent. A mismatch aborts. (Security review 2026-11-01.)
+PIN = "30A0C168DC1B8169927A712F8B7214F7B2476DB7C8660C066DDBC92EF541683A"
+CTX = ssl.create_default_context()
+CTX.check_hostname = False
+CTX.verify_mode = ssl.CERT_NONE  # chain check replaced by the exact-fingerprint pin below
 
 
 def call(method, path, body=None, headers=None):
-    req = urllib.request.Request(BASE + path, method=method,
-                                 data=json.dumps(body).encode() if body is not None else None,
-                                 headers={"Content-Type": "application/json", **(headers or {})})
-    with urllib.request.urlopen(req, context=CTX, timeout=15) as r:
-        return dict(r.headers), json.loads(r.read() or b"{}")
+    conn = http.client.HTTPSConnection(HOST, PORT, context=CTX, timeout=15)
+    conn.connect()
+    fp = hashlib.sha256(conn.sock.getpeercert(binary_form=True)).hexdigest().upper()
+    if fp != PIN:
+        conn.close()
+        sys.exit(f"certificate pin mismatch: refusing to send anything (got {fp[:16]}...)")
+    conn.request(method, path, body=json.dumps(body).encode() if body is not None else None,
+                 headers={"Content-Type": "application/json", **(headers or {})})
+    r = conn.getresponse()
+    out = (dict(r.getheaders()), json.loads(r.read() or b"{}"))
+    conn.close()
+    return out
 
 
 hdrs, _ = call("POST", "/ugreen/v1/verify/check", {"username": USER})
