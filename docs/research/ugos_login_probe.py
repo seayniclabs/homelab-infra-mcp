@@ -2,12 +2,14 @@
 """Probe: log in to the UGOS Pro API as nas-agent and make read-only calls.
 
 Prints result codes and field names only, never the password or the token.
-Password is read from /Volumes/data/secrets/ugreen_nas_agent_password.
+Set UGOS_HOST (the NAS address) and UGOS_PASSWORD_FILE (a file holding the
+nas-agent password); nothing site-specific is kept in this public repo.
 """
 import base64
 import hashlib
 import http.client
 import json
+import os
 import ssl
 import sys
 
@@ -15,8 +17,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
 USER = "nas-agent"
-PW = open("/Volumes/data/secrets/ugreen_nas_agent_password").read().strip()
-HOST, PORT = "192.168.68.68", 9443
+PW = open(os.environ["UGOS_PASSWORD_FILE"]).read().strip()
+HOST, PORT = os.environ["UGOS_HOST"], int(os.environ.get("UGOS_PORT", "9443"))
 # The NAS uses a self-signed certificate, so trust is by PIN: every connection's
 # certificate must match this SHA-256 fingerprint BEFORE any request (and so any
 # credential) is sent. A mismatch aborts. (Security review 2026-11-01.)
