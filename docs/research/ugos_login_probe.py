@@ -2,8 +2,10 @@
 """Probe: log in to the UGOS Pro API as nas-agent and make read-only calls.
 
 Prints result codes and field names only, never the password or the token.
-Set UGOS_HOST (the NAS address) and UGOS_PASSWORD_FILE (a file holding the
-nas-agent password); nothing site-specific is kept in this public repo.
+Set UGOS_HOST (the NAS address), UGOS_CERT_PIN (the SHA-256 fingerprint of its
+certificate), UGOS_PASSWORD_FILE (a file holding the password) and optionally
+UGOS_USER (default nas-agent) and UGOS_PORT (default 9443). Nothing
+site-specific is kept in this public repo.
 """
 import base64
 import hashlib
@@ -16,13 +18,17 @@ import sys
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
-USER = "nas-agent"
-PW = open(os.environ["UGOS_PASSWORD_FILE"]).read().strip()
+_missing = [k for k in ("UGOS_HOST", "UGOS_CERT_PIN", "UGOS_PASSWORD_FILE") if not os.environ.get(k)]
+if _missing:
+    sys.exit("set " + ", ".join(_missing))
+USER = os.environ.get("UGOS_USER", "nas-agent")
+with open(os.environ["UGOS_PASSWORD_FILE"]) as _f:
+    PW = _f.read().strip()
 HOST, PORT = os.environ["UGOS_HOST"], int(os.environ.get("UGOS_PORT", "9443"))
 # The NAS uses a self-signed certificate, so trust is by PIN: every connection's
 # certificate must match this SHA-256 fingerprint BEFORE any request (and so any
 # credential) is sent. A mismatch aborts. (Security review 2026-11-01.)
-PIN = "30A0C168DC1B8169927A712F8B7214F7B2476DB7C8660C066DDBC92EF541683A"
+PIN = os.environ["UGOS_CERT_PIN"].replace(":", "").strip().upper()
 CTX = ssl.create_default_context()
 CTX.check_hostname = False
 CTX.verify_mode = ssl.CERT_NONE  # chain check replaced by the exact-fingerprint pin below
