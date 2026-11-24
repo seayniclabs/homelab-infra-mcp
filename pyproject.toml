@@ -17,6 +17,8 @@ dependencies = [
     "httpx>=0.27",
     "pydantic>=2.7",
     "docker>=7.0",
+    # Not imported directly: a security floor for the urllib3 that docker pulls in
+    # (docker>=7.0 itself accepts urllib3>=1.26). Kept on purpose; see build-then-subtract pass 2026-11-24.
     "urllib3>=2.7.0",
     "pyyaml>=6.0",
 ]
